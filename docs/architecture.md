@@ -1,6 +1,6 @@
 # ts-code-agent 架构设计
 
-状态：待用户审阅；描述目标和演进路线，尚无对应实现。
+状态：Day 1 已进入实现阶段。本文同时描述后续演进；验证结果见 README。
 
 ## 1. 设计原则
 
@@ -10,26 +10,26 @@
 
 ## 2. 技术栈
 
-| 层面 | 选择 |
-| --- | --- |
-| 语言与运行时 | TypeScript strict、Node.js LTS、ESM |
-| 包与版本 | pnpm workspace、lockfile；初始化时固定工具版本 |
-| 开发与构建 | tsx、tsc；采用与 Node ESM 一致的模块解析设置 |
-| 配置和输入校验 | Zod |
-| CLI | Commander |
-| 模型接入 | 原生 fetch、Ollama 原生 API |
-| 测试 | Vitest，默认离线 |
-| 代码检查 | ESLint、Prettier |
-| 后续日志 | Pino；与可订阅运行事件分开 |
-| 第 2 周协议 | MCP 官方 TypeScript SDK |
-| 第 2 周持久化 | 文件 Checkpoint 适配器 |
-| 第 3 周检索 | PostgreSQL + pgvector、独立 Embedding 接口 |
+| 层面           | 选择                                           |
+| -------------- | ---------------------------------------------- |
+| 语言与运行时   | TypeScript strict、Node.js LTS、ESM            |
+| 包与版本       | pnpm workspace、lockfile；初始化时固定工具版本 |
+| 开发与构建     | tsx、tsc；采用与 Node ESM 一致的模块解析设置   |
+| 配置和输入校验 | Zod                                            |
+| CLI            | Commander                                      |
+| 模型接入       | 原生 fetch、Ollama 原生 API                    |
+| 测试           | Vitest，默认离线                               |
+| 代码检查       | ESLint、Prettier                               |
+| 后续日志       | Pino；与可订阅运行事件分开                     |
+| 第 2 周协议    | MCP 官方 TypeScript SDK                        |
+| 第 2 周持久化  | 文件 Checkpoint 适配器                         |
+| 第 3 周检索    | PostgreSQL + pgvector、独立 Embedding 接口     |
 
 依赖版本在初始化时根据实际兼容性固定；本文不预设未经验证的版本组合。Ollama 原生运行在 macOS，数据库可在后续使用容器。
 
 ## 3. 包边界与依赖
 
-下图展示目标包依赖；实线箭头表示源码依赖方向，不表示运行时数据流。Code Agent 在 Day 2–6 按需创建，所有包当前均尚未实现。
+下图展示目标包依赖；实线箭头表示源码依赖方向，不表示运行时数据流。Code Agent 在 Day 2–6 按需创建，Day 1 创建 CLI、Core 与 Adapters；其余能力按学习进度实现。
 
 ```mermaid
 flowchart TD
@@ -155,14 +155,14 @@ sequenceDiagram
 
 ## 6. 后续模块演进
 
-| 时间 | 新增模块 |
-| --- | --- |
-| 第 1 周 Day 2–6 | Core/tools、agent、context；创建 Code Agent 包并加入只读工具 |
-| 第 2 周 | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server |
-| 第 3 周 | Code Agent/retrieval；Adapters 中 Embedding 与 PostgreSQL 实现；infra/migrations |
-| 第 4 周 | Code Agent/planning、repository、editing、verification、permissions、prompts |
-| 第 5 周 | evals/cases、runner、scorers；运行追踪与资源控制 |
-| 第 6 周 | experiments/langgraph、multi-agent；演示、部署与周复盘 |
+| 时间            | 新增模块                                                                         |
+| --------------- | -------------------------------------------------------------------------------- |
+| 第 1 周 Day 2–6 | Core/tools、agent、context；创建 Code Agent 包并加入只读工具                     |
+| 第 2 周         | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server       |
+| 第 3 周         | Code Agent/retrieval；Adapters 中 Embedding 与 PostgreSQL 实现；infra/migrations |
+| 第 4 周         | Code Agent/planning、repository、editing、verification、permissions、prompts     |
+| 第 5 周         | evals/cases、runner、scorers；运行追踪与资源控制                                 |
+| 第 6 周         | experiments/langgraph、multi-agent；演示、部署与周复盘                           |
 
 运行事件由 Core 定义，CLI 订阅并显示。后续扩展 `run.started`、`tool.started`、`approval.required` 等事件。日志供诊断，事件用于业务状态与评测，两者不能相互替代。
 

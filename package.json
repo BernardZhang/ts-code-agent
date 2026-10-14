@@ -1,0 +1,31 @@
+{
+  "name": "ts-code-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b && tsc -p tsconfig.tests.json --noEmit",
+    "dev": "pnpm build && tsx apps/cli/src/main.ts",
+    "start": "node apps/cli/dist/main.js",
+    "test": "pnpm build && vitest run",
+    "test:ollama": "pnpm build && tsx apps/cli/scripts/smoke-ollama.ts",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/node": "24.10.0",
+    "eslint": "9.39.1",
+    "prettier": "3.6.2",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4",
+    "vitest": "3.2.4"
+  },
+  "packageManager": "pnpm@10.34.7",
+  "engines": {
+    "node": ">=24.0.0 <25",
+    "pnpm": "10.34.7"
+  }
+}
