@@ -1,6 +1,5 @@
 node_modules
 dist
-.tools
 pnpm-lock.yaml
 *.tsbuildinfo
 coverage

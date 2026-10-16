@@ -33,8 +33,8 @@
 
 ## 工程约定
 
-- TypeScript strict、ESM、Node.js LTS、pnpm workspace。
-- 初始化时记录并固定实际 Node.js 与 pnpm 版本，提交 lockfile。
+- TypeScript strict、ESM、机器默认 Node.js、pnpm workspace。
+- 使用机器默认 Node.js，记录实际验证版本；pnpm 全局安装并在 packageManager 中固定版本，提交 lockfile。不在项目内安装 Node.js 或 pnpm 工具链。
 - 使用 `tsx` 开发运行、`tsc` 类型检查与构建、Vitest 测试、ESLint 与 Prettier 检查格式。
 - 外部输入视为 `unknown`，在边界处校验；避免无理由的 `any` 和类型断言。
 - 配置集中读取和校验；提供 `.env.example`，不提交真实密钥或个人路径。

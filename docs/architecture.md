@@ -10,20 +10,20 @@
 
 ## 2. 技术栈
 
-| 层面           | 选择                                           |
-| -------------- | ---------------------------------------------- |
-| 语言与运行时   | TypeScript strict、Node.js LTS、ESM            |
-| 包与版本       | pnpm workspace、lockfile；初始化时固定工具版本 |
-| 开发与构建     | tsx、tsc；采用与 Node ESM 一致的模块解析设置   |
-| 配置和输入校验 | Zod                                            |
-| CLI            | Commander                                      |
-| 模型接入       | 原生 fetch、Ollama 原生 API                    |
-| 测试           | Vitest，默认离线                               |
-| 代码检查       | ESLint、Prettier                               |
-| 后续日志       | Pino；与可订阅运行事件分开                     |
-| 第 2 周协议    | MCP 官方 TypeScript SDK                        |
-| 第 2 周持久化  | 文件 Checkpoint 适配器                         |
-| 第 3 周检索    | PostgreSQL + pgvector、独立 Embedding 接口     |
+| 层面           | 选择                                                     |
+| -------------- | -------------------------------------------------------- |
+| 语言与运行时   | TypeScript strict、机器默认 Node.js、ESM                 |
+| 包与版本       | pnpm workspace、lockfile；记录 Node 版本，固定 pnpm 版本 |
+| 开发与构建     | tsx、tsc；采用与 Node ESM 一致的模块解析设置             |
+| 配置和输入校验 | Zod                                                      |
+| CLI            | Commander                                                |
+| 模型接入       | 原生 fetch、Ollama 原生 API                              |
+| 测试           | Vitest，默认离线                                         |
+| 代码检查       | ESLint、Prettier                                         |
+| 后续日志       | Pino；与可订阅运行事件分开                               |
+| 第 2 周协议    | MCP 官方 TypeScript SDK                                  |
+| 第 2 周持久化  | 文件 Checkpoint 适配器                                   |
+| 第 3 周检索    | PostgreSQL + pgvector、独立 Embedding 接口               |
 
 依赖版本在初始化时根据实际兼容性固定；本文不预设未经验证的版本组合。Ollama 原生运行在 macOS，数据库可在后续使用容器。
 

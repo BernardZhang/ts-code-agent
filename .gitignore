@@ -3,6 +3,5 @@ dist/
 *.tsbuildinfo
 .env
 .agent/
-.tools/
 coverage/
 .DS_Store

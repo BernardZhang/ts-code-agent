@@ -8,19 +8,17 @@ TypeScript AI Agent + Code Agent：6 周 / 36 天学习与工程实践
 
 ## 环境
 
-- Node.js **24.21.0**（见 `.node-version`）
-- pnpm **10.34.7**（见 `packageManager`）
-- 本机 Ollama，默认模型 `qwen3:8b`
+- 使用机器默认的 Node.js，当前验证版本为 **26.11.1**；不通过项目目录提供或切换 Node.js。
+- pnpm **10.34.7**（见 `packageManager`），全局安装。
+- 本机 Ollama，默认模型 `qwen3:8b`。
 
-建议使用你已有的 Node 版本管理工具切换到项目版本。当前初始化过程中还准备了被 Git 忽略的 `.tools/` 本地工具；在这台机器可以在终端执行：
+检查环境；如果没有 pnpm，执行全局安装：
 
 ```bash
-export PATH="$PWD/.tools/node_modules/.bin:$PATH"
 node --version
+npm install -g pnpm@10.34.7
 pnpm --version
 ```
-
-`.tools/` 不随仓库分发。其他机器应安装上述 Node.js 与 pnpm 版本。
 
 ## 安装与运行
 
