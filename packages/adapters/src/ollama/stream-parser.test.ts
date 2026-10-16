@@ -52,4 +52,16 @@ describe('NDJSON parser', () => {
     expect(cancelled).toBe(true);
     expect(body.locked).toBe(false);
   });
+
+  it('rejects incomplete UTF-8 at end of stream', async () => {
+    const consume = async () => {
+      for await (const value of parseNdjson(chunks([Uint8Array.of(0xe4)])))
+        void value;
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      code: 'protocol',
+      message: '响应包含无效 UTF-8。',
+    });
+  });
 });
