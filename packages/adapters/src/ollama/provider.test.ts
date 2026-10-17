@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { OllamaProvider } from './provider.js';
+import { EMessageRole, type ModelRequest } from '@ts-code-agent/core';
 
-const request = {
+const request: ModelRequest = {
   model: 'test',
-  messages: [{ role: 'user' as const, content: 'hello' }],
+  messages: [{ role: EMessageRole.USER, content: 'hello' }],
 };
 const item = (content: string, done: boolean) => ({
-  message: { role: 'assistant', content },
+  message: { role: EMessageRole.ASSISTANT, content },
   done,
 });
 const provider = (fetcher: typeof fetch, timeoutMs = 1000) =>
@@ -118,5 +119,140 @@ describe('Ollama provider', () => {
     });
     controller.abort();
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  it('将工具描述传递给模型请求', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ...item('hello', true), eval_count: 5 })),
+      );
+    const echoTool = {
+      name: 'echo',
+      description: 'Echoes the input',
+      parameters: {
+        type: 'object',
+        required: ['message'],
+        properties: { message: { type: 'string' } },
+      },
+    };
+
+    const result = await provider(fetcher).generate({
+      ...request,
+      tools: [echoTool],
+    });
+
+    expect(result).toEqual({ text: 'hello', usage: { outputTokens: 5 } });
+
+    // 模拟 fetch 第一次调用时，第二个参数里的 body
+    const body: unknown = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+
+    expect(body).toMatchObject({
+      tools: [
+        {
+          type: 'function',
+          function: echoTool,
+        },
+      ],
+    });
+  });
+
+  it('工具调用返回能够正常解析', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          done: true,
+          message: {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                function: {
+                  name: 'add',
+                  arguments: { a: 12, b: 30 },
+                },
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    const response = await provider(fetcher).generate(request);
+
+    expect(response).toMatchObject({
+      toolCalls: [
+        {
+          name: 'add',
+          arguments: { a: 12, b: 30 },
+        },
+      ],
+    });
+  });
+
+  it('验证工具结果回传的请求格式', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(item('结果是 42', true))));
+
+    await provider(fetcher).generate({
+      ...request,
+      messages: [
+        {
+          role: EMessageRole.ASSISTANT,
+          content: '',
+          toolCalls: [
+            {
+              name: 'add',
+              arguments: {
+                a: 10,
+                b: 32,
+              },
+            },
+          ],
+        },
+        {
+          role: EMessageRole.TOOL,
+          name: 'add',
+          content: '42',
+        },
+      ],
+    });
+
+    const body: unknown = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+
+    expect(body).toMatchObject({
+      messages: [
+        {
+          role: EMessageRole.ASSISTANT,
+          content: '',
+          tool_calls: [
+            {
+              function: {
+                name: 'add',
+                arguments: {
+                  a: 10,
+                  b: 32,
+                },
+              },
+            },
+          ],
+        },
+        {
+          role: EMessageRole.TOOL,
+          tool_name: 'add',
+          content: '42',
+        },
+      ],
+    });
+
+    // 没有多余的toolCalls 数据
+    expect(body).not.toMatchObject({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          toolCalls: expect.anything(),
+        }),
+      ]),
+    });
   });
 });

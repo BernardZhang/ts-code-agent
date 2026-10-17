@@ -108,4 +108,17 @@ describe('ToolRegistry', () => {
     expect(execute).toHaveBeenCalledWith('test', context);
     expect(execute).toHaveBeenCalledTimes(1);
   });
+
+  it('列出工具描述，不包含执行函数', () => {
+    const registry = new ToolRegistry();
+    registry.register(echoTool);
+
+    expect(registry.list()).toEqual([
+      {
+        name: echoTool.name,
+        description: echoTool.description,
+        parameters: echoTool.parameters,
+      },
+    ]);
+  });
 });

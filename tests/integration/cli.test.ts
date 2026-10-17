@@ -2,6 +2,9 @@ import { createServer, type ServerResponse } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ToolErrorCode } from '@ts-code-agent/core';
+
+let receivedToolContent: string | undefined;
 
 let url = '';
 const finish = (response: ServerResponse) =>
@@ -14,10 +17,56 @@ const finish = (response: ServerResponse) =>
 const server = createServer(async (request, response) => {
   let body = '';
   for await (const chunk of request) body += String(chunk);
-  const input: { model: string; stream: boolean; format?: unknown } =
-    JSON.parse(body);
+  const input: {
+    model: string;
+    stream: boolean;
+    format?: unknown;
+    messages?: Array<{
+      role: string;
+      content: string;
+      tool_name?: string;
+    }>;
+  } = JSON.parse(body);
   if (input.model === 'missing') {
     response.writeHead(404).end();
+    return;
+  }
+  if (input.model === 'invalid-tool-args') {
+    const toolMessage = input.messages?.find(
+      (message) => message.role === 'tool',
+    );
+
+    if (toolMessage !== undefined) {
+      receivedToolContent = toolMessage.content;
+      response.end(
+        JSON.stringify({
+          done: true,
+          message: {
+            role: 'assistant',
+            content: '工具参数不合法，无法完成计算。',
+          },
+        }),
+      );
+      return;
+    }
+
+    response.end(
+      JSON.stringify({
+        done: true,
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              function: {
+                name: 'add',
+                arguments: { a: '12', b: 30 },
+              },
+            },
+          ],
+        },
+      }),
+    );
     return;
   }
   if (input.format) {
@@ -121,5 +170,33 @@ describe('built CLI with mock Ollama', () => {
     const output = await result;
     expect(output.code).toBe(130);
     expect(output.stderr).toContain('请求已取消');
+  });
+
+  it('将工具参数校验失败结果回传模型', async () => {
+    receivedToolContent = undefined;
+
+    const result = await run([
+      'tools-demo',
+      '请调用 add 工具计算 12 加 30。',
+      '--model',
+      'invalid-tool-args',
+    ]).result;
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('工具参数不合法，无法完成计算。');
+
+    if (receivedToolContent === undefined) {
+      throw new Error('模拟服务未收到工具结果');
+    }
+
+    const toolResult: unknown = JSON.parse(receivedToolContent);
+
+    expect(toolResult).toMatchObject({
+      success: false,
+      error: {
+        code: ToolErrorCode.INVALID_ARGUMENTS,
+      },
+    });
   });
 });

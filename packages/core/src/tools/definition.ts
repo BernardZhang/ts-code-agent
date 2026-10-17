@@ -10,10 +10,13 @@ export interface ToolInputSchema<TInput> {
     | { success: false; error: { message: string } };
 }
 
-export interface ToolDefinition<TInput, TOutput> {
+export interface ToolDescription {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+}
+
+export interface ToolDefinition<TInput, TOutput> extends ToolDescription {
   inputSchema: ToolInputSchema<TInput>;
   execute: (input: TInput, context: ToolExecutionContext) => Promise<TOutput>;
 }

@@ -1,10 +1,11 @@
-import type { ToolDefinition, ToolExecutionContext } from './definition.js';
+import type {
+  ToolDefinition,
+  ToolDescription,
+  ToolExecutionContext,
+} from './definition.js';
 import { ToolErrorCode, type ToolResult } from './result.js';
 
-export interface RegisteredTool {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
+export interface RegisteredTool extends ToolDescription {
   invoke(
     rawArguments: unknown,
     context: ToolExecutionContext,
@@ -66,5 +67,13 @@ export class ToolRegistry {
 
   get(name: string): RegisteredTool | undefined {
     return this.tools.get(name);
+  }
+
+  list(): Omit<RegisteredTool, 'invoke'>[] {
+    return Array.from(this.tools.values()).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }));
   }
 }

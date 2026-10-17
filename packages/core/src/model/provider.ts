@@ -1,5 +1,6 @@
-import type { ModelMessage } from './messages.js';
+import type { ModelMessage, ModelToolCall } from './messages.js';
 import type { ModelEvent, ModelUsage } from './events.js';
+import type { ToolDescription } from '../tools/definition.js';
 
 export interface ModelRequest {
   model: string;
@@ -8,12 +9,14 @@ export interface ModelRequest {
   contextLength?: number;
   think?: boolean;
   jsonSchema?: Record<string, unknown>;
+  tools?: ToolDescription[];
 }
 
 export interface ModelResult {
   text: string;
   usage: ModelUsage;
   finishReason?: string;
+  toolCalls?: ModelToolCall[];
 }
 
 export interface ModelProvider {

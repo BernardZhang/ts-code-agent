@@ -1,4 +1,4 @@
-import { ModelError } from '@ts-code-agent/core';
+import { EMessageRole, ModelError } from '@ts-code-agent/core';
 import { z } from 'zod';
 import { bootstrap } from '../bootstrap.js';
 import type { Config } from '../config.js';
@@ -33,7 +33,7 @@ export async function structuredDemo(config: Config, signal: AbortSignal) {
     ...request,
     messages: [
       {
-        role: 'user',
+        role: EMessageRole.USER,
         content:
           '返回一个 JSON 对象：task 为学习 Agent Loop，steps 为三个学习步骤。',
       },

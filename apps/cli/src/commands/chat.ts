@@ -1,3 +1,4 @@
+import { EMessageRole, type ModelRequest } from '@ts-code-agent/core';
 import { bootstrap } from '../bootstrap.js';
 import type { Config } from '../config.js';
 
@@ -8,9 +9,9 @@ export async function chat(
   signal: AbortSignal,
 ) {
   const { provider, request } = bootstrap(config, signal);
-  const input = {
+  const input: ModelRequest = {
     ...request,
-    messages: [{ role: 'user' as const, content: prompt }],
+    messages: [{ role: EMessageRole.USER, content: prompt }],
   };
   if (stream) {
     for await (const event of provider.stream(input)) {

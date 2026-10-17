@@ -1,6 +1,7 @@
 import { OllamaProvider } from '@ts-code-agent/adapters';
 import { z } from 'zod';
 import { planSchema, parsePlan } from '../src/commands/structured-demo.js';
+import { EMessageRole, type ModelRequest } from '@ts-code-agent/core';
 
 const baseUrl = process.env.AGENT_BASE_URL ?? 'http://127.0.0.1:11434';
 const model = process.env.AGENT_MODEL ?? 'qwen3:8b';
@@ -14,9 +15,9 @@ console.log(
   ),
 );
 const provider = new OllamaProvider({ baseUrl, timeoutMs: 120_000 });
-const input = {
+const input: ModelRequest = {
   model,
-  messages: [{ role: 'user' as const, content: '仅回复：你好' }],
+  messages: [{ role: EMessageRole.USER, content: '仅回复：你好' }],
   contextLength: 8192,
   think: false,
 };
@@ -31,7 +32,7 @@ const structured = await provider.generate({
   ...input,
   messages: [
     {
-      role: 'user',
+      role: EMessageRole.USER,
       content: '返回 JSON：task 为学习 Agent，steps 为三个学习步骤。',
     },
   ],
@@ -43,7 +44,7 @@ console.log(
 const start = performance.now();
 const result = await provider.generate({
   model,
-  messages: [{ role: 'user', content: '仅回复：你好' }],
+  messages: [{ role: EMessageRole.USER, content: '仅回复：你好' }],
   contextLength: 8192,
   think: false,
 });

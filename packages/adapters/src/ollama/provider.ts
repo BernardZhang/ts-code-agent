@@ -4,6 +4,7 @@ import {
   type ModelRequest,
   type ModelEvent,
   type ModelResult,
+  EMessageRole,
 } from '@ts-code-agent/core';
 import { mapResponse } from './mapper.js';
 import { parseNdjson } from './stream-parser.js';
@@ -66,14 +67,57 @@ export class OllamaProvider implements ModelProvider {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: request.model,
-          messages: request.messages,
+          messages: request.messages.map((message) => {
+            if (message.role === EMessageRole.TOOL) {
+              return {
+                role: message.role,
+                tool_name: message.name,
+                content: message.content,
+              };
+            }
+
+            if (message.role === EMessageRole.ASSISTANT) {
+              return {
+                role: message.role,
+                content: message.content,
+                ...(message.toolCalls
+                  ? {
+                      tool_calls: message.toolCalls.map((toolCall) => ({
+                        function: {
+                          name: toolCall.name,
+                          arguments: toolCall.arguments,
+                        },
+                      })),
+                    }
+                  : {}),
+              };
+            }
+
+            return {
+              role: message.role,
+              content: message.content,
+            };
+          }),
           stream,
           think: request.think ?? false,
           ...(request.jsonSchema ? { format: request.jsonSchema } : {}),
           options: { num_ctx: request.contextLength ?? 8192 },
+          ...(request.tools?.length
+            ? {
+                tools: request.tools.map((tool) => ({
+                  type: 'function',
+                  function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                  },
+                })),
+              }
+            : {}),
         }),
       },
     );
+
     if (!response.ok) {
       await response.body?.cancel();
       throw new ModelError(
@@ -105,6 +149,7 @@ export class OllamaProvider implements ModelProvider {
         text: result.text,
         usage: result.usage,
         ...(result.finishReason ? { finishReason: result.finishReason } : {}),
+        ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}),
       };
     } catch (cause) {
       throw scope.error(cause);

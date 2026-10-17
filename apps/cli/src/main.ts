@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { readConfig, type ConfigOptions } from './config.js';
 import { chat } from './commands/chat.js';
 import { structuredDemo } from './commands/structured-demo.js';
+import { toolsDemo } from './commands/tools-demo.js';
 
 const controller = new AbortController();
 const cancel = () => controller.abort();
@@ -34,6 +35,11 @@ configure(
 configure(program.command('structured-demo')).action(
   async (options: ConfigOptions) => {
     await structuredDemo(readConfig(options), controller.signal);
+  },
+);
+configure(program.command('tools-demo').argument('<prompt>', '提示词')).action(
+  async (prompt: string, options: ConfigOptions) => {
+    await toolsDemo(prompt, readConfig(options), controller.signal);
   },
 );
 
