@@ -11,6 +11,49 @@ function chunks(bytes: Uint8Array[]) {
 }
 
 describe('NDJSON parser', () => {
+  it.each([
+    'single chunk',
+    'split chunks',
+    'no newline',
+    'multibyte',
+    'whitespace',
+  ])('rejects oversized records before parsing: %s', async (scenario) => {
+    const limit = 4 * 1024 * 1024;
+    const line =
+      scenario === 'multibyte'
+        ? JSON.stringify('你'.repeat(Math.ceil(limit / 3)))
+        : scenario === 'whitespace'
+          ? ' '.repeat(limit) + '{}'
+          : JSON.stringify('x'.repeat(limit));
+    const bytes = new TextEncoder().encode(
+      line + (scenario === 'no newline' ? '' : '\n'),
+    );
+    const parts =
+      scenario === 'split chunks'
+        ? [bytes.slice(0, 100), bytes.slice(100)]
+        : [bytes];
+    const body = chunks(parts);
+    const consume = async () => {
+      for await (const value of parseNdjson(body)) void value;
+    };
+    await expect(consume()).rejects.toMatchObject({
+      code: 'protocol',
+      message: '响应行超过 4 MiB 限制。',
+    });
+    expect(body.locked).toBe(false);
+  });
+
+  it('accepts individual records at the limit even when their combined chunk exceeds it', async () => {
+    const value = 'x'.repeat(4 * 1024 * 1024 - 2);
+    const line = JSON.stringify(value);
+    const result = [];
+    for await (const item of parseNdjson(
+      chunks([new TextEncoder().encode(line + '\n' + line)]),
+    ))
+      result.push(item);
+    expect(result).toEqual([value, value]);
+  });
+
   it('handles split UTF-8, CRLF, blank lines and a final line without newline', async () => {
     const bytes = new TextEncoder().encode(
       '\r\n{"text":"你好"}\r\n{"done":true}',
