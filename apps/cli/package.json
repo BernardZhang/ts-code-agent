@@ -1,0 +1,12 @@
+{
+  "name": "@ts-code-agent/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ts-code-agent/core": "workspace:*",
+    "@ts-code-agent/adapters": "workspace:*",
+    "commander": "14.0.2",
+    "zod": "4.1.12"
+  }
+}
