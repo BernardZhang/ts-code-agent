@@ -255,4 +255,60 @@ describe('Ollama provider', () => {
       ]),
     });
   });
+
+  it('拒绝携带工具的流式请求，不发送 HTTP 请求', async () => {
+    const fetcher = vi.fn<typeof fetch>();
+
+    const streamEvents = provider(fetcher).stream({
+      ...request,
+      tools: [
+        {
+          name: 'add',
+          description: '计算两数之和',
+          parameters: { type: 'object' },
+        },
+      ],
+    });
+
+    await expect(streamEvents.next()).rejects.toMatchObject({
+      code: 'unsupported',
+    });
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('拒绝流式响应中的意外工具调用', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          done: true,
+          message: {
+            role: EMessageRole.ASSISTANT,
+            content: '',
+            tool_calls: [
+              {
+                function: {
+                  name: 'add',
+                  arguments: {
+                    a: 12,
+                    b: 30,
+                  },
+                },
+              },
+            ],
+          },
+        }) + '\n',
+      ),
+    );
+
+    const streamEvents = provider(fetcher).stream(request);
+
+    const first = streamEvents.next();
+
+    await expect(first).rejects.toMatchObject({
+      code: 'unsupported',
+    });
+
+    expect(fetcher).toHaveBeenCalled();
+  });
 });

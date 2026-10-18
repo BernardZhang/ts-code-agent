@@ -29,10 +29,12 @@ export class OllamaProvider implements ModelProvider {
     const cancel = () => controller.abort();
     request.signal?.addEventListener('abort', cancel, { once: true });
     if (request.signal?.aborted) cancel();
+
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, this.options.timeoutMs);
+
     return {
       signal: controller.signal,
       error: (cause: unknown): Error => {
@@ -143,6 +145,7 @@ export class OllamaProvider implements ModelProvider {
         });
       }
       const result = mapResponse(raw);
+
       if (!result.done)
         throw new ModelError('protocol', '非流式响应没有结束标记。');
       return {
@@ -159,6 +162,12 @@ export class OllamaProvider implements ModelProvider {
   }
 
   async *stream(request: ModelRequest): AsyncGenerator<ModelEvent> {
+    if (request.tools?.length) {
+      throw new ModelError(
+        'unsupported',
+        '当前不支持流式工具调用，请使用 generate。',
+      );
+    }
     const scope = this.scope(request);
     try {
       const response = await this.send(request, true, scope.signal);
@@ -167,6 +176,14 @@ export class OllamaProvider implements ModelProvider {
       for await (const raw of parseNdjson(response.body)) {
         scope.signal.throwIfAborted();
         const item = mapResponse(raw);
+
+        if (item.toolCalls?.length) {
+          throw new ModelError(
+            'unsupported',
+            '流式响应包含工具调用，当前无法处理。',
+          );
+        }
+
         if (item.text) yield { type: 'text.delta', text: item.text };
         if (item.done) {
           yield {

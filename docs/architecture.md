@@ -1,6 +1,6 @@
 # ts-code-agent 架构设计
 
-状态：Day 1 已进入实现阶段。本文同时描述后续演进；验证结果见 README。
+状态：Day 1–2 已实现；Day 2 验证和限制见 docs/learning/day-02.md。本文同时描述后续演进；验证结果见 README。
 
 ## 1. 设计原则
 
@@ -199,3 +199,13 @@ flowchart LR
 - Vitest：https://vitest.dev/guide/
 - MCP TypeScript SDK：https://github.com/modelcontextprotocol/typescript-sdk
 - pgvector：https://github.com/pgvector/pgvector
+
+## 9. Day 2 实际实现
+
+Core/tools 提供通用工具描述、运行时校验接口、结果联合类型、注册表及执行器。注册时通过泛型包装闭包保留 Schema 与 execute 的输入类型关系，对外统一为接收 unknown 的 invoke。Core 不依赖 Zod；CLI 的 add 工具使用 Zod 实现校验并转换 JSON Schema。
+
+ModelMessage 按角色区分普通消息、带 toolCalls 的 assistant 消息及带工具名的 tool 结果。Adapters/ollama 负责 Core 与 Ollama 字段转换及响应边界校验；不执行工具。
+
+CLI tools-demo 装配 Provider、注册表和执行器，按“首次生成、顺序执行工具、回传全部结果、再次生成”运行。流式工具事件尚未设计，因此 stream 显式拒绝工具请求及意外工具响应。Agent Loop 留待 Day 3。
+
+ToolExecutor 以停止 Promise 与工具 Promise 竞争，向工具转发组合后的取消信号并清理资源。取消为协作式，不提供进程隔离、强制终止或事务回滚。
