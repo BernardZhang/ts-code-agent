@@ -1,6 +1,6 @@
 # ts-code-agent 需求规格
 
-状态：Day 1–2 已实现，Day 2 验证及限制见 docs/learning/day-02.md。本文定义验收标准，实际实现和验证状态见 README。
+状态：Day 1–3 已实现，Day 2 验证及限制见 docs/learning/day-02.md；Day 3 记录见 docs/learning/day-03.md。本文定义验收标准，实际实现和验证状态见 README。
 
 ## 1. 产品与学习目标
 
@@ -98,3 +98,14 @@ Day 1 不承诺固定生成速度；速度和内存压力在本机实测。后�
 - CLI tools-demo 演示固定两次模型请求及中间一轮工具执行；不实现 Day 3 自动循环。
 - 流式工具调用当前明确拒绝，不静默丢弃。超时取消不能保证停止忽略信号的工具，也不回滚副作用。
 - 实际工程检查、真实模型演示的证据来源及剩余验证见 docs/learning/day-02.md。
+
+## 7. Day 3：Agent Loop
+
+- Core AgentRunner 注入 ModelProvider 与 ToolExecutor，支持非流式模型请求和顺序工具执行；不依赖 Ollama 或 CLI。
+- 每轮保存完整 assistant 消息和全部 tool 结果；最终回答也保留在历史中。复制输入消息数组，运行中仅追加，不修改调用方数组。
+- maxSteps 为正的安全整数，统计模型请求次数；用户初始消息和工具执行不额外计步。
+- 无工具调用时返回 complete；额度耗尽且仍有工具调用时，执行完最后一轮工具后返回 max_steps，保留消息历史，不额外请求总结。
+- 普通工具失败回传模型；用户取消抛出取消异常；Provider 错误向上抛出，不自动重试。
+- agent-demo 装配计算工具，当前上限固定为 10；回答输出到 stdout，统计和上限提示输出到 stderr。
+- 离线验收覆盖直接回答、两轮工具、上限、取消、参数失败后修正、Provider 失败和非法步数配置。真实模型表现与 Runtime 正确性分开记录。
+- complete 不等于任务成功；不包含交互式多轮输入、持久化恢复、上下文裁剪或任务结果验证器。GitHub Day 3 Issue 本次未成功读取，完整验收项尚待核对。

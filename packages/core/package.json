@@ -8,5 +8,8 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
+  },
+  "devDependencies": {
+    "zod": "4.1.12"
   }
 }

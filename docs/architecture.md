@@ -1,6 +1,6 @@
 # ts-code-agent 架构设计
 
-状态：Day 1–2 已实现；Day 2 验证和限制见 docs/learning/day-02.md。本文同时描述后续演进；验证结果见 README。
+状态：Day 1–3 已实现；Day 2 验证和限制见 docs/learning/day-02.md；Day 3 记录见 docs/learning/day-03.md。本文同时描述后续演进；验证结果见 README。
 
 ## 1. 设计原则
 
@@ -209,3 +209,13 @@ ModelMessage 按角色区分普通消息、带 toolCalls 的 assistant 消息及
 CLI tools-demo 装配 Provider、注册表和执行器，按“首次生成、顺序执行工具、回传全部结果、再次生成”运行。流式工具事件尚未设计，因此 stream 显式拒绝工具请求及意外工具响应。Agent Loop 留待 Day 3。
 
 ToolExecutor 以停止 Promise 与工具 Promise 竞争，向工具转发组合后的取消信号并清理资源。取消为协作式，不提供进程隔离、强制终止或事务回滚。
+
+## 10. Day 3 实际实现
+
+Core 的 agent/runner.ts 定义 AgentRunOptions、AgentResult、EAgentStatus 和 AgentRunner，通过公开入口导出。构造时注入 ModelProvider 和 ToolExecutor，run 接收请求及 maxSteps。Core 运行代码不依赖 Zod；Core 的 devDependency Zod 仅用于工具测试。
+
+每次 run 复制消息数组，并将同一 AbortSignal 传给模型与工具；没有外部信号时创建内部信号。每轮模型响应先写入一条完整 assistant 消息，再判断是否含工具调用；工具结果按顺序以 JSON 字符串写入 tool 消息。普通工具失败继续回传，取消及 Provider 错误向上抛出。
+
+模型请求次数达到上限时，最后一轮工具仍执行，返回 max_steps；无工具调用则返回 complete。返回值包含 steps 和 messages，完成时还包含 ModelResult。Runner 不保留跨 run 的内部对话状态；继续对话需要调用方显式传回历史，新 run 重新计步。
+
+CLI agent-demo 负责计算任务的系统提示、工具注册、固定 10 步上限及终端输出。提示遵循与任务正确性不由通用循环保证；不引入自动恢复或结果验证模块。

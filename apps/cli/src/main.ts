@@ -5,6 +5,7 @@ import { readConfig, type ConfigOptions } from './config.js';
 import { chat } from './commands/chat.js';
 import { structuredDemo } from './commands/structured-demo.js';
 import { toolsDemo } from './commands/tools-demo.js';
+import { agentDemo } from './commands/agent-demo.js';
 
 const controller = new AbortController();
 const cancel = () => controller.abort();
@@ -41,6 +42,14 @@ configure(program.command('tools-demo').argument('<prompt>', '提示词')).actio
   async (prompt: string, options: ConfigOptions) => {
     await toolsDemo(prompt, readConfig(options), controller.signal);
   },
+);
+configure(
+  program
+    .command('agent-demo')
+    .argument('<prompt>', '提示词')
+    .action(async (prompt: string, options: ConfigOptions) => {
+      await agentDemo(prompt, readConfig(options), controller.signal);
+    }),
 );
 
 try {

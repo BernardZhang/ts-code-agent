@@ -2,9 +2,11 @@
 
 TypeScript AI Agent + Code Agent：6 周 / 36 天学习与工程实践
 
-当前实现 Day 1–2：本地 Ollama 文本生成、流式文本、取消、结构化输出，以及非流式工具调用、注册与执行。尚未实现自动 Agent Loop。
+当前实现 Day 1–3：本地 Ollama 文本生成、流式文本、取消、结构化输出、非流式工具调用，以及带模型请求步数上限的 Agent Loop。
 
 Day 1 环境与历史验证见 [Day 1 验证记录](docs/day1-verification.md)；Day 2 功能、学习与验证见 [Day 2 学习记录](docs/learning/day-02.md)。
+
+Day 3 Agent Loop 的设计、实验及限制见 [Day 3 学习记录](docs/learning/day-03.md)。
 
 ## 环境
 
@@ -76,6 +78,20 @@ pnpm start tools-demo "请调用 add 工具计算 12 加 30。"
 
 当前只演示一轮工具执行，不自动循环。流式请求携带工具或流式响应出现工具调用时明确报告 `unsupported`。超时只保证结束异步等待；忽略 AbortSignal 的工具可能继续执行，已有副作用不会自动回滚，也不能抢占阻塞事件循环的同步代码。
 
+## Day 3 Agent Loop
+
+```bash
+pnpm build
+pnpm start agent-demo "计算 (12 + 30) + 8"
+pnpm start agent-demo "计算 1 + 2 + 3 + 4 + 5 + c"
+```
+
+`agent-demo` 注册 add 工具，自动重复模型请求与顺序工具执行，直到模型返回无工具调用的响应，或达到上限。当前 CLI 固定最多 10 次模型请求；Core 的 `maxSteps` 接受正的安全整数。最后一次响应中的工具仍完整执行，随后返回 `max_steps`，CLI 以退出码 1 结束。若最后一次响应已无工具调用，则正常完成。
+
+最终回答写入 stdout，模型请求次数和工具调用请求数写入 stderr；参数校验失败的工具调用也计入统计。普通工具失败作为完整 ToolResult 回传，用户取消停止运行，Provider 错误直接向上抛出，不自动重试。`complete` 只表示循环结束，不保证回答正确或完成用户目标。
+
+系统提示要求使用工具及不猜测未知变量，但模型可能提前回答或不遵循提示。当前 CLI 是单次任务，不等待变量补充；再次启动不会保留历史。调用方可显式传入上次返回的 messages 继续对话，新一次 run 的 steps 从头计数。
+
 ## 检查
 
 ```bash
@@ -99,7 +115,7 @@ pnpm test:ollama
 ## 目录与学习入口
 
 - `apps/cli`：配置、装配、命令与取消交互。
-- `packages/core`：统一消息、Provider 接口、事件、工具定义、注册表与执行器。
+- `packages/core`：统一消息、Provider 接口、事件、工具定义、注册表、执行器与 AgentRunner。
 - `packages/adapters`：Ollama HTTP 接入、响应映射及 NDJSON 解析。
 - `tests/integration`：使用模拟 Ollama 验证 CLI。
 - `docs/spec.md`、`docs/architecture.md`：需求、验收与架构图。
