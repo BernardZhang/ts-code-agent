@@ -219,3 +219,7 @@ Core 的 agent/runner.ts 定义 AgentRunOptions、AgentResult、EAgentStatus 和
 模型请求次数达到上限时，最后一轮工具仍执行，返回 max_steps；无工具调用则返回 complete。返回值包含 steps 和 messages，完成时还包含 ModelResult。Runner 不保留跨 run 的内部对话状态；继续对话需要调用方显式传回历史，新 run 重新计步。
 
 CLI agent-demo 负责计算任务的系统提示、工具注册、固定 10 步上限及终端输出。提示遵循与任务正确性不由通用循环保证；不引入自动恢复或结果验证模块。
+
+### Day 3 并行调度补充
+
+AgentRunOptions.toolExecution 使用 EToolExecution 枚举，可选 SEQUENTIAL（默认）或 PARALLEL。并行分支使用 Promise.all 启动同轮工具，保留原调用顺序并在结果全部就绪后追加 tool 消息。ToolExecutor 将普通工具失败转换成 ToolResult，因此一个失败不会使同轮其他结果丢失。两种模式在执行前检查取消，并将同一任务信号传给执行器；并行工具已经开始后，取消无法使它们从未执行。仅对相互独立的调用启用并行，当前不增加调度队列或并发上限。

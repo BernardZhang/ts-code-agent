@@ -6,9 +6,15 @@ import type {
 } from '../model/provider.js';
 import type { ToolExecutor } from '../tools/executor.js';
 
+export enum EToolExecution {
+  SEQUENTIAL = 'sequential',
+  PARALLEL = 'parallel',
+}
+
 export interface AgentRunOptions {
   request: ModelRequest;
   maxSteps: number;
+  toolExecution?: EToolExecution;
 }
 
 export enum EAgentStatus {
@@ -53,6 +59,7 @@ export class AgentRunner {
 
     // loop 限制最大访问模型次数maxSteps
     for (let step = 0; step < options.maxSteps; step++) {
+      signal.throwIfAborted();
       const modelResult = await this.provider.generate(request);
       const toolCalls = modelResult.toolCalls;
 
@@ -74,22 +81,30 @@ export class AgentRunner {
         };
       }
 
-      // 循环执行工具
-      for (const tool of toolCalls) {
-        const toolResult = await this.toolExecutor.execute(
+      const executeTool = async (tool: (typeof toolCalls)[number]) => {
+        signal.throwIfAborted();
+        const result = await this.toolExecutor.execute(
           tool.name,
           tool.arguments,
           { signal },
         );
-
-        // 工具调用完成后（成功或失败），将工具调用及工具执行结果放入到messages中
-        request.messages.push({
+        return {
           role: EMessageRole.TOOL,
           name: tool.name,
-          content: JSON.stringify(toolResult),
-        });
+          content: JSON.stringify(result),
+        } satisfies ModelMessage;
+      };
 
+      if (options.toolExecution === EToolExecution.PARALLEL) {
+        // Promise.all 保留调用顺序；全部结果就绪后才进入下一次模型请求。
+        const results = await Promise.all(toolCalls.map(executeTool));
+        request.messages.push(...results);
         signal.throwIfAborted();
+      } else {
+        for (const tool of toolCalls) {
+          request.messages.push(await executeTool(tool));
+          signal.throwIfAborted();
+        }
       }
     }
 

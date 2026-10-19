@@ -86,7 +86,7 @@ pnpm start agent-demo "计算 (12 + 30) + 8"
 pnpm start agent-demo "计算 1 + 2 + 3 + 4 + 5 + c"
 ```
 
-`agent-demo` 注册 add 工具，自动重复模型请求与顺序工具执行，直到模型返回无工具调用的响应，或达到上限。当前 CLI 固定最多 10 次模型请求；Core 的 `maxSteps` 接受正的安全整数。最后一次响应中的工具仍完整执行，随后返回 `max_steps`，CLI 以退出码 1 结束。若最后一次响应已无工具调用，则正常完成。
+`agent-demo` 注册 add 工具，自动重复模型请求与顺序工具执行，直到模型返回无工具调用的响应，或达到上限。Core 支持 `toolExecution: EToolExecution.PARALLEL`，同轮独立工具并发执行，全部结果按原调用顺序回传；默认和当前 CLI 仍顺序执行，尚无并发数量上限。当前 CLI 固定最多 10 次模型请求；Core 的 `maxSteps` 接受正的安全整数。最后一次响应中的工具仍完整执行，随后返回 `max_steps`，CLI 以退出码 1 结束。若最后一次响应已无工具调用，则正常完成。
 
 最终回答写入 stdout，模型请求次数和工具调用请求数写入 stderr；参数校验失败的工具调用也计入统计。普通工具失败作为完整 ToolResult 回传，用户取消停止运行，Provider 错误直接向上抛出，不自动重试。`complete` 只表示循环结束，不保证回答正确或完成用户目标。
 
