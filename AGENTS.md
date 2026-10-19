@@ -34,6 +34,7 @@
 ## 工程约定
 
 - TypeScript strict、ESM、机器默认 Node.js、pnpm workspace。
+- 禁止在业务判断、赋值和引用中散落硬编码字符串作为状态、模式、角色、事件或错误码；必须先定义明确的类型或枚举，具有运行时比较或复用需求时统一使用枚举成员或具名常量，不直接比较裸字符串。字符串字面量集中在定义或外部协议边界处，测试和调用方复用同一公开定义。
 - 使用机器默认 Node.js，记录实际验证版本；pnpm 全局安装并在 packageManager 中固定版本，提交 lockfile。不在项目内安装 Node.js 或 pnpm 工具链。
 - 使用 `tsx` 开发运行、`tsc` 类型检查与构建、Vitest 测试、ESLint 与 Prettier 检查格式。
 - 外部输入视为 `unknown`，在边界处校验；避免无理由的 `any` 和类型断言。

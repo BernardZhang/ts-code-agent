@@ -60,7 +60,11 @@ importers:
         specifier: 4.1.12
         version: 4.1.12
 
-  packages/core: {}
+  packages/core:
+    devDependencies:
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
 
 packages:
 
