@@ -7,6 +7,7 @@ import type { ModelProvider } from '../model/provider.js';
 import { EMessageRole, type ModelMessage } from '../model/messages.js';
 import type { ToolDefinition } from '../tools/definition.js';
 import { ToolErrorCode } from '../tools/result.js';
+import { ContextManager } from '../context/manager.js';
 
 const addInputSchema = z.object({
   a: z.number(),
@@ -460,5 +461,182 @@ describe('AgentRunner', () => {
     });
 
     expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('模型请求上下文消息超预算裁剪，且历史完整消息没有被改动', async () => {
+    const generate = vi.fn<ModelProvider['generate']>().mockResolvedValue({
+      text: '结果是 7',
+      usage: {},
+    });
+    const provider: ModelProvider = {
+      capabilities: {
+        structuredOutput: false,
+      },
+      generate,
+      stream() {
+        throw new Error('本测试不使用流式生成');
+      },
+    };
+
+    const toolExecutor = new ToolExecutor(new ToolRegistry());
+    const agentRunner = new AgentRunner(provider, toolExecutor);
+
+    const systemMessage: ModelMessage = {
+      role: EMessageRole.SYSTEM,
+      content: '你是计算助手',
+    };
+    const latestUserMessage: ModelMessage = {
+      role: EMessageRole.USER,
+      content: '再加4',
+    };
+    const messages: ModelMessage[] = [
+      systemMessage,
+      { role: EMessageRole.USER, content: '计算 1 + 2' },
+      { role: EMessageRole.ASSISTANT, content: '3' },
+      latestUserMessage,
+    ];
+    const contextManager = new ContextManager(
+      {
+        contextWindow: 60,
+        reservedOutputTokens: 20,
+        toolDefinitionTokens: 20,
+      },
+      () => 10,
+    );
+    const agentResult = await agentRunner.run({
+      request: {
+        model: 'test-model',
+        messages,
+      },
+      maxSteps: 5,
+      contextManager,
+    });
+
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [systemMessage, latestUserMessage],
+      }),
+    );
+
+    expect(agentResult.messages).toEqual([
+      ...messages,
+      { role: EMessageRole.ASSISTANT, content: '结果是 7' },
+    ]);
+  });
+
+  it('超预算时 抛出对应错误消息且Provider 一次也不调用', async () => {
+    const generate = vi.fn<ModelProvider['generate']>().mockResolvedValue({
+      text: '结果是 7',
+      usage: {},
+    });
+    const provider: ModelProvider = {
+      capabilities: {
+        structuredOutput: false,
+      },
+      generate,
+      stream() {
+        throw new Error('本测试不使用流式生成');
+      },
+    };
+
+    const toolExecutor = new ToolExecutor(new ToolRegistry());
+    const agentRunner = new AgentRunner(provider, toolExecutor);
+
+    const systemMessage: ModelMessage = {
+      role: EMessageRole.SYSTEM,
+      content: '你是计算助手',
+    };
+    const latestUserMessage: ModelMessage = {
+      role: EMessageRole.USER,
+      content: '再加4',
+    };
+    const messages: ModelMessage[] = [
+      systemMessage,
+      { role: EMessageRole.USER, content: '计算 1 + 2' },
+      { role: EMessageRole.ASSISTANT, content: '3' },
+      latestUserMessage,
+    ];
+    const contextManager = new ContextManager(
+      {
+        contextWindow: 50,
+        reservedOutputTokens: 20,
+        toolDefinitionTokens: 20,
+      },
+      () => 10,
+    );
+
+    await expect(() =>
+      agentRunner.run({
+        request: {
+          model: 'test-model',
+          messages,
+        },
+        maxSteps: 5,
+        contextManager,
+      }),
+    ).rejects.toThrowError('必须保留的最近轮次消息超出 token 预算');
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('每一轮都要重新检查预算', async () => {
+    const generate = vi
+      .fn<ModelProvider['generate']>()
+      .mockResolvedValueOnce({
+        text: '调用工具add',
+        usage: {},
+        toolCalls: [
+          {
+            name: 'add',
+            arguments: { a: 1, b: 2 },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        text: '1+2=3',
+        usage: {},
+      });
+    const provider: ModelProvider = {
+      capabilities: {
+        structuredOutput: false,
+      },
+      generate,
+      stream() {
+        throw new Error('本测试不使用流式生成');
+      },
+    };
+    const registry = new ToolRegistry();
+    registry.register(addTool);
+
+    const toolExecutor = new ToolExecutor(registry);
+    const agentRunner = new AgentRunner(provider, toolExecutor);
+
+    const systemMessage: ModelMessage = {
+      role: EMessageRole.SYSTEM,
+      content: '你是计算助手',
+    };
+    const messages: ModelMessage[] = [
+      systemMessage,
+      { role: EMessageRole.USER, content: '计算 1 + 2' },
+    ];
+    const contextManager = new ContextManager(
+      {
+        contextWindow: 70,
+        reservedOutputTokens: 20,
+        toolDefinitionTokens: 20,
+      },
+      () => 10,
+    );
+
+    await expect(() =>
+      agentRunner.run({
+        request: {
+          model: 'test-model',
+          messages,
+        },
+        maxSteps: 5,
+        contextManager,
+      }),
+    ).rejects.toThrow('必须保留的最近轮次消息超出 token 预算');
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,11 @@
+import {
+  estimateMessageTokens,
+  estimateToolDefinitionTokens,
+} from '@ts-code-agent/adapters';
 import { z } from 'zod';
 import {
   AgentRunner,
+  ContextManager,
   EAgentStatus,
   EMessageRole,
   ToolExecutor,
@@ -10,6 +15,8 @@ import {
 } from '@ts-code-agent/core';
 import type { Config } from '../config.js';
 import { bootstrap } from '../bootstrap.js';
+
+const RESERVED_OUTPUT_TOKENS = 1024;
 
 const addInputSchema = z.object({
   a: z.number(),
@@ -41,6 +48,16 @@ export async function agentDemo(
 
   registry.register(addTool);
 
+  const tools = registry.list();
+  const contextManager = new ContextManager(
+    {
+      contextWindow: config.contextLength,
+      reservedOutputTokens: RESERVED_OUTPUT_TOKENS,
+      toolDefinitionTokens: estimateToolDefinitionTokens(tools),
+    },
+    estimateMessageTokens,
+  );
+
   // 请求参数
   const modelRequest: ModelRequest = {
     ...request,
@@ -60,14 +77,19 @@ export async function agentDemo(
         content: prompt,
       },
     ],
-    tools: registry.list(),
+    tools,
   };
 
   const agentRunner = new AgentRunner(provider, toolExecutor);
 
+  process.stderr.write(
+    '上下文使用 UTF-8 字节数启发式 token 估算，非精确计数，不保证不超限。\n',
+  );
+
   const agentResult = await agentRunner.run({
     request: modelRequest,
     maxSteps: 10,
+    contextManager,
   });
 
   const toolCalls = agentResult.messages.flatMap((message) =>
