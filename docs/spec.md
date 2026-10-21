@@ -1,6 +1,6 @@
 # ts-code-agent 需求规格
 
-状态：Day 1–3 已实现，Day 2 验证及限制见 docs/learning/day-02.md；Day 3 记录见 docs/learning/day-03.md。本文定义验收标准，实际实现和验证状态见 README。
+状态：Day 1–3 已实现，Day 4 实现及验收边界见 docs/learning/day-04.md，Day 2 验证及限制见 docs/learning/day-02.md；Day 3 记录见 docs/learning/day-03.md。本文定义验收标准，实际实现和验证状态见 README。
 
 ## 1. 产品与学习目标
 
@@ -111,3 +111,17 @@ Day 1 不承诺固定生成速度；速度和内存压力在本机实测。后�
 - complete 不等于任务成功；不包含交互式多轮输入、持久化恢复、上下文裁剪或任务结果验证器。已读取 GitHub Issue #3，补充其三轮连续工具调用与并行工具验收。
 
 并行执行通过 run 的 toolExecution: EToolExecution.PARALLEL 显式启用，仅用于同轮相互独立的工具；依赖其他工具结果的调用应留在下一轮。全部工具结果就绪后才请求模型，消息按原调用顺序保存，普通失败不丢弃其他结果。取消通知已启动工具并停止后续模型请求，不保证撤销或强停副作用。当前不提供并发数量上限；CLI 仍采用默认顺序模式。
+
+## 8. Day 4：上下文预算与任务计划
+
+Core 已实现 ContextManager、整轮历史裁剪、上下文错误分类和 TaskPlanner；CLI 提供 plan-demo、context-demo，并在 agent-demo 中装配预算。Runner 每轮构建请求上下文并保留完整历史。必要消息放不下时在请求前失败，不静默截断。
+
+预算扣除输出预留与工具定义成本，保留全部 system 和当前用户轮次，再选择连续的最近历史轮次。计划支持稳定 ID、状态更新和步骤替换。模型计划通过 CLI 的 Zod 边界校验，Core 不依赖 Zod。
+
+实际验证与剩余验收见 docs/learning/day-04.md。启发式估算不是精确 token 数；单个长轮次未压缩，超限时停止，不能宣称长任务可无限继续。计划生成和 Runtime complete 不等于用户任务成功。
+
+## 9. Day 6：通用 TaskPlanner 接入排期
+
+已确认在 Day 6 / GitHub Issue #6 完成通用 TaskPlanner 最小执行集成；具体任务与验收见 [Day 6 范围](day-06-plan.md)。执行前生成校验计划，每轮携带唯一最新计划并纳入预算，根据工具结果显式更新状态，保留完整历史与更新依据；未完成计划不能因模型返回普通文本而误报任务成功。Day 4 的独立计划管理与示例不代表此项已实现。
+
+Day 22–24 继续负责验证反馈、自动修复、代码领域规划和完整 Code Agent 集成；本次不调整原日期，也不提前实现后续能力。

@@ -2,7 +2,7 @@
 
 TypeScript AI Agent + Code Agent：6 周 / 36 天学习与工程实践
 
-当前实现 Day 1–3：本地 Ollama 文本生成、流式文本、取消、结构化输出、非流式工具调用，以及带模型请求步数上限的 Agent Loop。
+当前实现 Day 1–4（Day 4 验收边界见学习记录）：本地 Ollama 文本生成、流式文本、取消、结构化输出、非流式工具调用，以及带模型请求步数上限的 Agent Loop。
 
 Day 1 环境与历史验证见 [Day 1 验证记录](docs/day1-verification.md)；Day 2 功能、学习与验证见 [Day 2 学习记录](docs/learning/day-02.md)。
 
@@ -121,3 +121,25 @@ pnpm test:ollama
 - `docs/spec.md`、`docs/architecture.md`：需求、验收与架构图。
 
 建议阅读顺序：`provider.ts` 接口 → `stream-parser.ts` → Ollama Provider → CLI 命令 → 对应测试。JSON Schema 约束模型生成，Zod 校验模型实际输出；两者承担不同职责。
+
+## Day 4 离线综合演示
+
+```sh
+pnpm dev context-demo
+```
+
+`context-demo` 不需要 Ollama：创建演示计划，更新定位和修复步骤的状态，将最新计划放入 system 消息，然后按预算裁剪旧轮次。输出包含计划、裁剪前后消息数、上下文及模拟成本。成本为 JSON 序列化字符数，不是真实模型 token 数；预算恰好容纳 system 和当前用户轮次。计划状态为演示预设，不代表实际执行或验证。完整历史保留在内存中，旧工具证据不会自动转入计划。
+
+### Agent Demo 上下文预算
+
+`agent-demo` 已接入 ContextManager：总容量取 `--context-length`，输出预留为 1024 tokens，工具描述单独估算。Adapters 中的估算器使用完整消息或公开工具描述的 UTF-8 JSON 字节数加固定开销；不是实际 tokenizer，也不保证是严格上界。估算说明输出到 stderr。
+
+单个用户任务的工具交互属于同一轮次，当前不压缩这一轮次；必要消息放不下时在下一次模型请求前失败。CLI 使用 context_budget_exceeded 等错误码明确报告上下文预算、历史结构和估算错误，退出码为 1。输出预留目前用于本地预算计算，不代表 Provider 已设置输出 token 硬上限。
+
+Day 4 实现、真实模型实验与验收限制见 [Day 4 学习记录](docs/learning/day-04.md)。真实模型曾在计算任务中提前结束；不能将退出码 0 或 complete 当作任务成功。
+
+```sh
+pnpm dev plan-demo "修复失败测试，先定位原因，再修复并验证"
+```
+
+通用 TaskPlanner 接入 Agent 主流程已排入 [Day 6 任务范围](docs/day-06-plan.md)及 [Issue #6](https://github.com/BernardZhang/ts-code-agent/issues/6)；当前独立计划模块和示例尚未实现计划驱动执行。

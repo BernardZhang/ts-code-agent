@@ -1,6 +1,6 @@
 # ts-code-agent 架构设计
 
-状态：Day 1–3 已实现；Day 2 验证和限制见 docs/learning/day-02.md；Day 3 记录见 docs/learning/day-03.md。本文同时描述后续演进；验证结果见 README。
+状态：Day 1–3 已实现，Day 4 实现及验收边界见 docs/learning/day-04.md；Day 2 验证和限制见 docs/learning/day-02.md；Day 3 记录见 docs/learning/day-03.md。本文同时描述后续演进；验证结果见 README。
 
 ## 1. 设计原则
 
@@ -223,3 +223,15 @@ CLI agent-demo 负责计算任务的系统提示、工具注册、固定 10 步�
 ### Day 3 并行调度补充
 
 AgentRunOptions.toolExecution 使用 EToolExecution 枚举，可选 SEQUENTIAL（默认）或 PARALLEL。并行分支使用 Promise.all 启动同轮工具，保留原调用顺序并在结果全部就绪后追加 tool 消息。ToolExecutor 将普通工具失败转换成 ToolResult，因此一个失败不会使同轮其他结果丢失。两种模式在执行前检查取消，并将同一任务信号传给执行器；并行工具已经开始后，取消无法使它们从未执行。仅对相互独立的调用启用并行，当前不增加调度队列或并发上限。
+
+## 11. Day 4 实际实现
+
+Core/context 定义 MessageTokenEstimator、ContextManager、ContextError 及错误码；估算函数由外部注入。Core/planning 管理计划、稳定步骤 ID 与状态，不调用模型或依赖 Zod。
+
+Adapters/context 提供 UTF-8 JSON 字节数加固定开销的启发式估算；CLI 装配模型配置容量、工具定义成本和 1024 输出预留。预留仅参与本地预算，未作为 Provider 输出硬上限。
+
+Runner 每轮将裁剪结果传入独立模型请求，后续回答和工具结果追加到完整历史。context-demo 将最新演示计划作为 system 保留；plan-demo 使用 JSON Schema 与 Zod 生成并校验初始计划。当前无计划自动执行、轮内压缩、摘要或持久化逐轮请求快照。细节与验证见 docs/learning/day-04.md。
+
+### Day 6 已确认集成安排
+
+通用 TaskPlanner 接入 Agent 主流程已排入 Day 6 / Issue #6，尚未实现。CLI 装配初始规划与运行依赖，执行过程通过校验后的显式入口更新计划；每轮用最新计划构建上下文并计入预算，完整历史另行保留。计划更新应关联工具结果，不能以模型普通回答替代执行证据。具体接口在 Day 6 实施时确定，Core 不依赖具体外部模型接入。范围与验收见 [Day 6 任务范围](day-06-plan.md)。

@@ -1,11 +1,13 @@
 import { Command, CommanderError } from 'commander';
-import { ModelError } from '@ts-code-agent/core';
+import { ContextError, ModelError } from '@ts-code-agent/core';
 import { ZodError } from 'zod';
 import { readConfig, type ConfigOptions } from './config.js';
 import { chat } from './commands/chat.js';
 import { structuredDemo } from './commands/structured-demo.js';
 import { toolsDemo } from './commands/tools-demo.js';
 import { agentDemo } from './commands/agent-demo.js';
+import { planDemo } from './commands/plan-demo.js';
+import { contextDemo } from './commands/context-demo.js';
 
 const controller = new AbortController();
 const cancel = () => controller.abort();
@@ -33,10 +35,23 @@ configure(
     await chat(prompt, readConfig(options), options.stream, controller.signal);
   },
 );
+program
+  .command('context-demo')
+  .description('离线演示计划更新与上下文裁剪（模拟 token 成本）')
+  .action(() => contextDemo());
+
 configure(program.command('structured-demo')).action(
   async (options: ConfigOptions) => {
     await structuredDemo(readConfig(options), controller.signal);
   },
+);
+configure(
+  program
+    .command('plan-demo')
+    .argument('<prompt>', '提示词')
+    .action(async (prompt: string, options: ConfigOptions) => {
+      await planDemo(prompt, readConfig(options), controller.signal);
+    }),
 );
 configure(program.command('tools-demo').argument('<prompt>', '提示词')).action(
   async (prompt: string, options: ConfigOptions) => {
@@ -68,7 +83,7 @@ try {
     const message =
       error instanceof ZodError
         ? '配置不合法，请检查地址、数字参数以及 think 的 true/false 值。'
-        : error instanceof ModelError
+        : error instanceof ModelError || error instanceof ContextError
           ? `[${error.code}] ${error.message}`
           : '发生未预期错误。';
     process.stderr.write(`${message}\n`);

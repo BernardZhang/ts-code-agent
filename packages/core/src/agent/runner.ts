@@ -1,3 +1,4 @@
+import type { ContextManager } from '../context/manager.js';
 import { EMessageRole, type ModelMessage } from '../model/messages.js';
 import type {
   ModelProvider,
@@ -15,6 +16,7 @@ export interface AgentRunOptions {
   request: ModelRequest;
   maxSteps: number;
   toolExecution?: EToolExecution;
+  contextManager?: ContextManager;
 }
 
 export enum EAgentStatus {
@@ -60,7 +62,13 @@ export class AgentRunner {
     // loop 限制最大访问模型次数maxSteps
     for (let step = 0; step < options.maxSteps; step++) {
       signal.throwIfAborted();
-      const modelResult = await this.provider.generate(request);
+      const contextMessages =
+        options.contextManager?.buildContext(request.messages) ??
+        request.messages;
+      const modelResult = await this.provider.generate({
+        ...request,
+        messages: contextMessages,
+      });
       const toolCalls = modelResult.toolCalls;
 
       signal.throwIfAborted();

@@ -9,3 +9,6 @@ export * from './tools/registry.js';
 export * from './tools/executor.js';
 
 export * from './agent/runner.js';
+export * from './context/manager.js';
+export * from './context/errors.js';
+export * from './planning/task-planner.js';
