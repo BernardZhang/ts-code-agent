@@ -4,7 +4,7 @@
 
 ## 1. 设计原则
 
-采用 CLI 优先、少量 workspace 包、包内按能力分模块的结构。将通用 Agent 机制、外部协议接入和代码领域能力分离，以适配 6 周学习与交付节奏。
+采用 CLI 优先、少量 workspace 包、包内按能力分模块的结构。将通用 Agent 机制、外部协议接入和代码领域能力分离，以适配六阶段学习与交付节奏（当前排期见 learning-roadmap.md）。
 
 通过构造参数显式注入依赖，暂不引入 DI 容器。只有出现实际使用场景时才增加模块或扩展抽象。
 
@@ -155,14 +155,14 @@ sequenceDiagram
 
 ## 6. 后续模块演进
 
-| 时间            | 新增模块                                                                         |
-| --------------- | -------------------------------------------------------------------------------- |
-| 第 1 周 Day 2–6 | Core/tools、agent、context；创建 Code Agent 包并加入只读工具                     |
-| 第 2 周         | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server       |
-| 第 3 周         | Code Agent/retrieval；Adapters 中 Embedding 与 PostgreSQL 实现；infra/migrations |
-| 第 4 周         | Code Agent/planning、repository、editing、verification、permissions、prompts     |
-| 第 5 周         | evals/cases、runner、scorers；运行追踪与资源控制                                 |
-| 第 6 周         | experiments/langgraph、multi-agent；演示、部署与周复盘                           |
+| 阶段 | 模块演进                                                                                                              |
+| ---- | --------------------------------------------------------------------------------------------------------------------- |
+| A    | 在既有 Core/tools、agent、context 与 Code Agent 只读工具上，增加 CLI 会话、流式运行事件、追踪与预算、通用计划执行集成 |
+| B    | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server                                            |
+| C    | Code Agent/permissions、repository、editing、verification、planning；隔离后命令执行                                   |
+| D    | Code Agent/retrieval；Adapters Embedding 与 PostgreSQL；infra/migrations                                              |
+| E    | evals/cases、runner、scorers；故障注入及全量回归                                                                      |
+| F    | experiments/langgraph、multi-agent；模块整理、演示与交付                                                              |
 
 运行事件由 Core 定义，CLI 订阅并显示。后续扩展 `run.started`、`tool.started`、`approval.required` 等事件。日志供诊断，事件用于业务状态与评测，两者不能相互替代。
 
@@ -170,17 +170,17 @@ Checkpoint 保存版本化、可序列化状态；不保存工具函数、网络
 
 未来 API 管理任务生命周期，Web 订阅对外事件，新增 contracts 通信 Schema。当前仅保留这一方向，不实现后台任务服务或网络协议。
 
-### 六周能力演进
+### 六阶段能力演进
 
 下图表示交付顺序，不表示模块之间的代码依赖。每阶段在前一阶段可运行成果上扩展；框架和多 Agent 实验保留在独立实验目录。
 
 ```mermaid
 flowchart LR
-    W1["第 1 周<br/>模型接入、工具、Agent Loop"] --> W2["第 2 周<br/>MCP、Workflow、恢复与审批"]
-    W2 --> W3["第 3 周<br/>检索、记忆与检索评测"]
-    W3 --> W4["第 4 周<br/>编辑、命令与验证闭环"]
-    W4 --> W5["第 5 周<br/>评测、追踪、权限与隔离"]
-    W5 --> W6["第 6 周<br/>对照实验、演示与交付"]
+    A["阶段 A<br/>会话、流式、追踪、计划与预算"] --> B["阶段 B<br/>MCP、Workflow、恢复与审批"]
+    B --> C["阶段 C<br/>权限、隔离、编辑与验证闭环"]
+    C --> D["阶段 D<br/>检索、记忆与检索评测"]
+    D --> E["阶段 E<br/>任务评测与故障回归"]
+    E --> F["阶段 F<br/>框架对照、演示与交付"]
 ```
 
 ## 7. 验证策略
@@ -232,9 +232,17 @@ Adapters/context 提供 UTF-8 JSON 字节数加固定开销的启发式估算；
 
 Runner 每轮将裁剪结果传入独立模型请求，后续回答和工具结果追加到完整历史。context-demo 将最新演示计划作为 system 保留；plan-demo 使用 JSON Schema 与 Zod 生成并校验初始计划。当前无计划自动执行、轮内压缩、摘要或持久化逐轮请求快照。细节与验证见 docs/learning/day-04.md。
 
-### Day 6 已确认集成安排
+### 原 Issue #6 的阶段 A 集成安排
 
-通用 TaskPlanner 接入 Agent 主流程已排入 Day 6 / Issue #6，尚未实现。CLI 装配初始规划与运行依赖，执行过程通过校验后的显式入口更新计划；每轮用最新计划构建上下文并计入预算，完整历史另行保留。计划更新应关联工具结果，不能以模型普通回答替代执行证据。具体接口在 Day 6 实施时确定，Core 不依赖具体外部模型接入。范围与验收见 [Day 6 任务范围](day-06-plan.md)。
+通用 TaskPlanner 接入 Agent 主流程保留在 Issue #6，按新路线安排在阶段 A 的会话、流式与追踪基线之后，尚未实现。CLI 装配初始规划与运行依赖，执行过程通过校验后的显式入口更新计划；每轮用最新计划构建上下文并计入预算，完整历史另行保留。计划更新应关联工具结果，不能以模型普通回答替代执行证据。具体接口在 Day 6 实施时确定，Core 不依赖具体外部模型接入。范围与验收见 [Day 6 任务范围](day-06-plan.md)。
+
+### 会话与流式的边界
+
+CLI 会话管理输入和内存历史，单次 Agent run 管理当前任务和步数；各自持有独立取消生命周期。Core 统一事件描述文本增量、工具执行及结束，Adapters 映射具体 Provider 流协议，CLI 消费事件显示并由 TraceCollector 记录。会话失败后的半轮历史需显式提交/回滚策略，不得带入缺少工具结果的历史；历史回滚不撤销副作用。Checkpoint 后续保存版本化可恢复状态，检索式记忆另在阶段 D 实现，三者不混用。阶段 A 仅规划这些接口职责，具体实现设计在相应任务开始时完成。
+
+### 最新倒排容量
+
+学习顺序仍按上述六阶段，但日历改为2026-10-28至12-14共41个学习日，每日最多10h。任务表的369h是目标主线预算，另有41h缓冲；原425h初估尚需实测校准，不能由容量倒推证明一定可完成。#45/#46结束时先校准，再按周更新。此排期调整不改变Core/Adapters/CLI依赖边界，也不省略取消、完整工具历史、权限或独立验证。
 
 ### Day 5 文本搜索实现
 

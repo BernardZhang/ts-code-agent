@@ -1,12 +1,14 @@
 # ts-code-agent
 
-TypeScript AI Agent + Code Agent：6 周 / 36 天学习与工程实践
+TypeScript AI Agent + Code Agent：六阶段渐进学习与工程实践
 
 当前实现 Day 1–4（Day 4 验收边界见学习记录），并已接入 Day 5 四个只读仓库工具。Day 5 CLI 已完成模拟模型集成及真实模型四工具基础验证；回答完整性和剩余验收见 [Day 5 学习记录](docs/learning/day-05.md)。
 
 Day 1 环境与历史验证见 [Day 1 验证记录](docs/day1-verification.md)；Day 2 功能、学习与验证见 [Day 2 学习记录](docs/learning/day-02.md)。
 
 Day 3 Agent Loop 的设计、实验及限制见 [Day 3 学习记录](docs/learning/day-03.md)。
+
+最新顺序、工时、缓冲与日期见 [学习路线](docs/learning-roadmap.md)。原 36 个学习日保留为历史任务单元，新增会话 CLI 与流式 Agent 专项；不再把一个 Issue 等同一个日历学习日。当前目标为2026-12-15前完成全部内容学习（12-14验收），每周6天、每天≤10h；逐日预算和实测校准规则见路线文档。
 
 ## 环境
 
