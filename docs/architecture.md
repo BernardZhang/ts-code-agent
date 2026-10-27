@@ -235,3 +235,21 @@ Runner 每轮将裁剪结果传入独立模型请求，后续回答和工具结�
 ### Day 6 已确认集成安排
 
 通用 TaskPlanner 接入 Agent 主流程已排入 Day 6 / Issue #6，尚未实现。CLI 装配初始规划与运行依赖，执行过程通过校验后的显式入口更新计划；每轮用最新计划构建上下文并计入预算，完整历史另行保留。计划更新应关联工具结果，不能以模型普通回答替代执行证据。具体接口在 Day 6 实施时确定，Core 不依赖具体外部模型接入。范围与验收见 [Day 6 任务范围](day-06-plan.md)。
+
+### Day 5 文本搜索实现
+
+`packages/code-agent/src/tools/search-code.ts` 复用 Core ToolDefinition 和工作区真实路径检查；程序装配扫描预算，模型仅提供 path/content。目录使用有界条目队列，文件以 64 KiB 块读取，增量 TextDecoder 处理 UTF-8 边界，保留跨块 CR 后归一化 CRLF。KMP 前缀状态支持跨块、多行、重叠匹配；环形行列位置表按搜索词长度分配，不保存完整文件。文件句柄在 finally 中关闭，异步读取前后检查 AbortSignal。
+
+字节预算限制文件读取量，不是精确的进程内存上限：单个目录仍由 readdir 一次读取并排序。路径检查不能保证防御检查后文件或目录被并发替换；不提供文件系统快照或 OS 级隔离。搜索结果针对实际扫描内容，不代表仓库在整个运行期间保持不变。
+
+### Day 5 Git 状态执行与解析
+
+Code Agent 将 Git 状态分成 git-status（ToolDefinition 装配）、git-status-process（固定命令与进程生命周期）、git-status-parser（纯协议解析）。进程使用参数数组、shell:false，移除继承的 GIT\_\* 环境覆盖并设置 GIT_OPTIONAL_LOCKS=0，避免可选 index 刷新写入；不接受模型命令或路径。按字节累计 stdout/stderr，在 close 后检查退出码、严格 UTF-8 解码，再交给纯解析器。解析器使用枚举及集中协议组合定义，NUL 分隔保留特殊文件名，不 trim；复制或重命名额外消费一个原路径。
+
+测试使用本机临时 Git 仓库及模拟子进程，不访问网络或真实模型。目录根部 .git 检查只约束当前支持入口形式，不提供对恶意仓库配置或并发路径替换的操作系统级隔离。
+
+### Day 5 CLI 装配
+
+CLI 通过 @ts-code-agent/code-agent 公开入口引入四个工具工厂，以同一真实工作区路径创建工具，注册到 Core ToolRegistry，由既有 ToolExecutor 和 AgentRunner 调度。独立 repo-demo 命令保留 agent-demo 加法学习示例，复用 bootstrap 和启发式 ContextManager；没有在 Core 增加文件系统依赖。提示要求模型依据工具证据、说明截断和失败；提示约束不等于结果验证或文件内容隔离保证。Day 6 的计划执行集成不在此命令本次实现范围内。
+
+CLI 的 RepoToolExecutor 继承既有 ToolExecutor，仅包装调用前后诊断，不改变 Core 的工具执行语义；可选诊断直接写 stderr，不持久化工具输入输出。

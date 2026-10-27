@@ -35,12 +35,18 @@ importers:
       vitest:
         specifier: 3.2.4
         version: 3.2.4(@types/node@24.10.0)(tsx@4.20.6)
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
 
   apps/cli:
     dependencies:
       '@ts-code-agent/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
+      '@ts-code-agent/code-agent':
+        specifier: workspace:*
+        version: link:../../packages/code-agent
       '@ts-code-agent/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -52,6 +58,15 @@ importers:
         version: 4.1.12
 
   packages/adapters:
+    dependencies:
+      '@ts-code-agent/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+
+  packages/code-agent:
     dependencies:
       '@ts-code-agent/core':
         specifier: workspace:*

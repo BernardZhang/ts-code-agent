@@ -8,6 +8,7 @@ import { toolsDemo } from './commands/tools-demo.js';
 import { agentDemo } from './commands/agent-demo.js';
 import { planDemo } from './commands/plan-demo.js';
 import { contextDemo } from './commands/context-demo.js';
+import { repoDemo } from './commands/repo-demo.js';
 
 const controller = new AbortController();
 const cancel = () => controller.abort();
@@ -15,7 +16,7 @@ process.once('SIGINT', cancel);
 
 const program = new Command()
   .name('ts-code-agent')
-  .description('Day 1：本地 Ollama 模型实验')
+  .description('本地模型与只读仓库分析 CLI')
   .exitOverride();
 const configure = (command: Command) =>
   command
@@ -65,6 +66,28 @@ configure(
     .action(async (prompt: string, options: ConfigOptions) => {
       await agentDemo(prompt, readConfig(options), controller.signal);
     }),
+);
+
+configure(
+  program
+    .command('repo-demo')
+    .description('通过四个只读工具分析工作区（不修改代码）')
+    .argument('<prompt>', '仓库分析任务')
+    .option('--workspace <directory>', '工作区目录', '.')
+    .option('--trace-tools', '向 stderr 输出工具名、路径与执行状态', false),
+).action(
+  async (
+    prompt: string,
+    options: ConfigOptions & { workspace: string; traceTools: boolean },
+  ) => {
+    await repoDemo(
+      prompt,
+      options.workspace,
+      readConfig(options),
+      controller.signal,
+      options.traceTools,
+    );
+  },
 );
 
 try {

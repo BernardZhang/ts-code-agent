@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@ts-code-agent/code-agent": "workspace:*",
     "@ts-code-agent/core": "workspace:*",
     "@ts-code-agent/adapters": "workspace:*",
     "commander": "14.0.2",

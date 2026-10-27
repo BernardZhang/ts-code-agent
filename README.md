@@ -2,7 +2,7 @@
 
 TypeScript AI Agent + Code Agent：6 周 / 36 天学习与工程实践
 
-当前实现 Day 1–4（Day 4 验收边界见学习记录）：本地 Ollama 文本生成、流式文本、取消、结构化输出、非流式工具调用，以及带模型请求步数上限的 Agent Loop。
+当前实现 Day 1–4（Day 4 验收边界见学习记录），并已接入 Day 5 四个只读仓库工具。Day 5 CLI 已完成模拟模型集成及真实模型四工具基础验证；回答完整性和剩余验收见 [Day 5 学习记录](docs/learning/day-05.md)。
 
 Day 1 环境与历史验证见 [Day 1 验证记录](docs/day1-verification.md)；Day 2 功能、学习与验证见 [Day 2 学习记录](docs/learning/day-02.md)。
 
@@ -143,3 +143,22 @@ pnpm dev plan-demo "修复失败测试，先定位原因，再修复并验证"
 ```
 
 通用 TaskPlanner 接入 Agent 主流程已排入 [Day 6 任务范围](docs/day-06-plan.md)及 [Issue #6](https://github.com/BernardZhang/ts-code-agent/issues/6)；当前独立计划模块和示例尚未实现计划驱动执行。
+
+## Day 5：只读仓库分析
+
+```bash
+pnpm dev repo-demo "先查看项目结构，读取 package.json，并搜索 AgentRunner，依据工具结果解释项目" --workspace .
+# 编译后运行
+pnpm build
+pnpm start repo-demo "查询 Git 状态，说明哪些文件有变化" --workspace /path/to/repository
+```
+
+`--workspace` 默认为当前目录；启动前验证目录存在。命令注册 list_directory、read_file、search_code、git_status，由模型选择调用，默认顺序执行，最多请求模型 10 次。回答写入 stdout，运行提示及调用次数写入 stderr；步数耗尽退出 1，Ctrl+C 退出 130。模型不调用工具或提前停止仍可能产生回答，正常退出仅表示循环结束，不能据此认定分析正确或任务完成。
+
+目录默认 BFS、最多 10 层和 50 条；文件读取默认最多 64 KiB；搜索支持普通文本和多行，默认最多 200 个文件、10000 个目录条目、16 MiB 扫描字节、100 个匹配。工具失败及不完整标记会回传模型；工具输出仍受上下文预算限制，单个长轮次超限会停止，不自动压缩。当前不支持编辑、任意命令或计划驱动执行；TaskPlanner 执行集成留在 Day 6。
+
+Git 工具当前要求工作区为仓库根目录，非仓库及仓库子目录调用会返回工具失败；子目录支持的后续设计见 Issue #43。普通工具失败不会自动令整个 Agent 退出非零，应结合工具结果和最终回答判断。模拟模型验证不能证明真实模型会稳定选对工具、充分探索或遵守所有提示。
+
+`repo-demo --trace-tools` 可选开启工具调用诊断，向 stderr 输出工具名、请求路径及 started/succeeded/failed 状态，失败时附工具错误码；路径与名称最多显示 200 个字符，使用 JSON 转义。诊断不输出搜索词、文件正文或完整工具结果，默认关闭。提示明确工作区根目录是 `.`，不是系统根目录 `/`；此提示不放宽路径边界。
+
+若出现 `context_budget_exceeded`，说明当前用户轮次的工具结果放不进上下文；可以缩小探索任务，或显式传入 `--context-length 16384`（需模型与本机资源支持）。命令不会自动扩大上下文或静默裁剪当前轮次。
