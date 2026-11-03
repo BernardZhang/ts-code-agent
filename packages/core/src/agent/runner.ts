@@ -1,4 +1,6 @@
 import type { ContextManager } from '../context/manager.js';
+import { ModelError, ModelErrorCode } from '../model/errors.js';
+import { EModelEventType, type ModelUsage } from '../model/events.js';
 import { EMessageRole, type ModelMessage } from '../model/messages.js';
 import type {
   ModelProvider,
@@ -12,11 +14,28 @@ export enum EToolExecution {
   PARALLEL = 'parallel',
 }
 
+export enum EAgentEventType {
+  TEXT_DELTA = 'text.delta',
+  MODEL_FINISHED = 'model.finished',
+}
+
+export type AgentEvent =
+  | { type: EAgentEventType.TEXT_DELTA; text: string }
+  | {
+      type: EAgentEventType.MODEL_FINISHED;
+      step: number;
+      usage: ModelUsage;
+      finishReason?: string;
+    };
+
 export interface AgentRunOptions {
   request: ModelRequest;
   maxSteps: number;
   toolExecution?: EToolExecution;
   contextManager?: ContextManager;
+
+  stream?: boolean;
+  onEvent?: (event: AgentEvent) => void;
 }
 
 export enum EAgentStatus {
@@ -65,12 +84,28 @@ export class AgentRunner {
       const contextMessages =
         options.contextManager?.buildContext(request.messages) ??
         request.messages;
-      const modelResult = await this.provider.generate({
-        ...request,
-        messages: contextMessages,
-      });
+      const modelResult = await this.generateResponse(
+        {
+          ...request,
+          messages: contextMessages,
+        },
+        options,
+      );
       const toolCalls = modelResult.toolCalls;
 
+      signal.throwIfAborted();
+
+      // 一次模型请求已完整消费；这不代表 Agent 任务已经结束。
+      options.onEvent?.({
+        type: EAgentEventType.MODEL_FINISHED,
+        step: step + 1,
+        usage: { ...modelResult.usage },
+        ...(modelResult.finishReason === undefined
+          ? {}
+          : { finishReason: modelResult.finishReason }),
+      });
+
+      // 同步事件订阅方也可能取消任务，不再追加消息或执行工具。
       signal.throwIfAborted();
 
       request.messages.push({
@@ -122,5 +157,55 @@ export class AgentRunner {
       steps: options.maxSteps,
       messages: request.messages,
     };
+  }
+
+  private async generateResponse(
+    request: ModelRequest,
+    options: AgentRunOptions,
+  ): Promise<ModelResult> {
+    const { stream, onEvent } = options;
+
+    if (!stream) {
+      return await this.provider.generate(request);
+    }
+
+    let result: ModelResult | undefined;
+
+    for await (const event of this.provider.stream(request)) {
+      request.signal?.throwIfAborted();
+
+      // DONE后再收到事件，属于协议异常
+      if (result) {
+        throw new ModelError(
+          ModelErrorCode.PROTOCOL,
+          '模型流式事件协议异常：DONE 后仍收到事件。',
+        );
+      }
+
+      switch (event.type) {
+        case EModelEventType.TEXT_DELTA:
+          onEvent?.({
+            type: EAgentEventType.TEXT_DELTA,
+            text: event.text,
+          });
+          break;
+        case EModelEventType.DONE: {
+          result = event.result;
+          break;
+        }
+      }
+    }
+
+    // 最后一次 next() 可能在取消后直接结束，不会进入循环体。
+    request.signal?.throwIfAborted();
+
+    if (!result) {
+      throw new ModelError(
+        ModelErrorCode.PROTOCOL,
+        '模型流式事件协议异常：未收到 DONE 事件。',
+      );
+    }
+
+    return result;
   }
 }

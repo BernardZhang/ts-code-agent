@@ -1,3 +1,4 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import {
   EMessageRole,
   ETaskStepStatus,
@@ -21,13 +22,20 @@ export function parseTaskPlan(text: string): TaskPlan {
   try {
     raw = JSON.parse(text);
   } catch (cause) {
-    throw new ModelError('json', '模型输出不是合法 JSON。', { cause });
+    throw new ModelError(ModelErrorCode.JSON, '模型输出不是合法 JSON。', {
+      cause,
+    });
   }
   const parsed = planSchema.safeParse(raw);
-  if (!parsed.success)
-    throw new ModelError('validation', '模型 JSON 不符合任务规划 Schema。', {
-      cause: parsed.error,
-    });
+  if (!parsed.success) {
+    throw new ModelError(
+      ModelErrorCode.VALIDATION,
+      '模型 JSON 不符合任务规划 Schema。',
+      {
+        cause: parsed.error,
+      },
+    );
+  }
 
   const taskPlanner = new TaskPlanner();
 
@@ -47,8 +55,12 @@ export async function planDemo(
   signal: AbortSignal,
 ) {
   const { provider, request } = bootstrap(config, signal);
-  if (!provider.capabilities.structuredOutput)
-    throw new ModelError('unsupported', 'Provider 不支持结构化输出。');
+  if (!provider.capabilities.structuredOutput) {
+    throw new ModelError(
+      ModelErrorCode.UNSUPPORTED,
+      'Provider 不支持结构化输出。',
+    );
+  }
   const result = await provider.generate({
     ...request,
     messages: [

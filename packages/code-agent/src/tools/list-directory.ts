@@ -176,7 +176,9 @@ export function createListDirectoryTool(
 
         for (let i = 0; i < pendingDirectoryQueue.length; i++) {
           signal.throwIfAborted();
-          if (entries.length > maxEntryCount) break;
+          if (entries.length > maxEntryCount) {
+            break;
+          }
 
           const current = pendingDirectoryQueue[i];
 

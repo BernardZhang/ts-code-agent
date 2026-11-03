@@ -1,10 +1,13 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import { describe, expect, it } from 'vitest';
 import { parseNdjson } from './stream-parser.js';
 
 function chunks(bytes: Uint8Array[]) {
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      for (const byte of bytes) controller.enqueue(byte);
+      for (const byte of bytes) {
+        controller.enqueue(byte);
+      }
       controller.close();
     },
   });
@@ -34,10 +37,12 @@ describe('NDJSON parser', () => {
         : [bytes];
     const body = chunks(parts);
     const consume = async () => {
-      for await (const value of parseNdjson(body)) void value;
+      for await (const value of parseNdjson(body)) {
+        void value;
+      }
     };
     await expect(consume()).rejects.toMatchObject({
-      code: 'protocol',
+      code: ModelErrorCode.PROTOCOL,
       message: '响应行超过 4 MiB 限制。',
     });
     expect(body.locked).toBe(false);
@@ -49,8 +54,9 @@ describe('NDJSON parser', () => {
     const result = [];
     for await (const item of parseNdjson(
       chunks([new TextEncoder().encode(line + '\n' + line)]),
-    ))
+    )) {
       result.push(item);
+    }
     expect(result).toEqual([value, value]);
   });
 
@@ -61,8 +67,9 @@ describe('NDJSON parser', () => {
     const result = [];
     for await (const value of parseNdjson(
       chunks(Array.from(bytes, (byte) => Uint8Array.of(byte))),
-    ))
+    )) {
       result.push(value);
+    }
     expect(result).toEqual([{ text: '你好' }, { done: true }]);
   });
 
@@ -72,9 +79,13 @@ describe('NDJSON parser', () => {
       Uint8Array.of(255),
     ]) {
       const consume = async () => {
-        for await (const value of parseNdjson(chunks([bytes]))) void value;
+        for await (const value of parseNdjson(chunks([bytes]))) {
+          void value;
+        }
       };
-      await expect(consume()).rejects.toMatchObject({ code: 'protocol' });
+      await expect(consume()).rejects.toMatchObject({
+        code: ModelErrorCode.PROTOCOL,
+      });
     }
   });
 
@@ -98,12 +109,13 @@ describe('NDJSON parser', () => {
 
   it('rejects incomplete UTF-8 at end of stream', async () => {
     const consume = async () => {
-      for await (const value of parseNdjson(chunks([Uint8Array.of(0xe4)])))
+      for await (const value of parseNdjson(chunks([Uint8Array.of(0xe4)]))) {
         void value;
+      }
     };
 
     await expect(consume()).rejects.toMatchObject({
-      code: 'protocol',
+      code: ModelErrorCode.PROTOCOL,
       message: '响应包含无效 UTF-8。',
     });
   });

@@ -1,3 +1,4 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import { createServer, type ServerResponse } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -22,7 +23,9 @@ const finish = (response: ServerResponse) =>
   );
 const server = createServer(async (request, response) => {
   let body = '';
-  for await (const chunk of request) body += String(chunk);
+  for await (const chunk of request) {
+    body += String(chunk);
+  }
   const input: {
     model: string;
     stream: boolean;
@@ -118,7 +121,9 @@ const server = createServer(async (request, response) => {
       message: { role: 'assistant', content: 'first' },
     }) + '\n',
   );
-  if (input.model === 'hang') return;
+  if (input.model === 'hang') {
+    return;
+  }
   const timer = setTimeout(() => finish(response), 150);
   response.on('close', () => clearTimeout(timer));
 });
@@ -127,8 +132,9 @@ beforeAll(async () => {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
-  if (!address || typeof address === 'string')
+  if (!address || typeof address === 'string') {
     throw new Error('Missing server address');
+  }
   url = `http://127.0.0.1:${address.port}`;
 });
 afterAll(async () => {
@@ -289,14 +295,14 @@ describe('built CLI with mock Ollama', () => {
     ]).result;
     expect(result.code).toBe(1);
     expect(result.stdout).toBe('');
-    expect(result.stderr).not.toContain('[http]');
+    expect(result.stderr).not.toContain(`[${ModelErrorCode.HTTP}]`);
     expect(result.stderr).toContain(`[${EContextErrorCode.BUDGET_EXCEEDED}]`);
     expect(result.stderr).toContain('上下文空间已满');
   });
   it('returns nonzero for HTTP errors', async () => {
     const result = await run(['chat', 'hello', '--model', 'missing']).result;
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain('[http]');
+    expect(result.stderr).toContain(`[${ModelErrorCode.HTTP}]`);
   });
   it('cancels an active response on SIGINT and exits 130', async () => {
     const { child, result } = run(['chat', 'hello', '--model', 'hang']);

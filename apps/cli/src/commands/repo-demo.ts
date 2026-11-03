@@ -16,7 +16,7 @@ import {
   EMessageRole,
   ModelError,
   ToolRegistry,
-  type ModelErrorCode,
+  ModelErrorCode,
 } from '@ts-code-agent/core';
 import type { Config } from '../config.js';
 import { bootstrap } from '../bootstrap.js';
@@ -25,7 +25,6 @@ import { RepoToolExecutor } from './repo-tool-executor.js';
 const RESERVED_OUTPUT_TOKENS = 1024;
 const MAX_STEPS = 10;
 const DIRECTORY_DEPTH = 10;
-const WORKSPACE_ERROR_CODE: ModelErrorCode = 'validation';
 
 export async function repoDemo(
   prompt: string,
@@ -43,7 +42,7 @@ export async function repoDemo(
     }
   } catch (cause) {
     throw new ModelError(
-      WORKSPACE_ERROR_CODE,
+      ModelErrorCode.VALIDATION,
       '工作区必须是存在且可访问的目录。',
       {
         cause,

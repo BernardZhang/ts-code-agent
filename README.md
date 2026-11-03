@@ -1,12 +1,14 @@
 # ts-code-agent
 
-TypeScript AI Agent + Code Agent：6 周 / 36 天学习与工程实践
+TypeScript AI Agent + Code Agent：六阶段渐进学习与工程实践
 
 当前实现 Day 1–4（Day 4 验收边界见学习记录），并已接入 Day 5 四个只读仓库工具。Day 5 CLI 已完成模拟模型集成及真实模型四工具基础验证；回答完整性和剩余验收见 [Day 5 学习记录](docs/learning/day-05.md)。
 
 Day 1 环境与历史验证见 [Day 1 验证记录](docs/day1-verification.md)；Day 2 功能、学习与验证见 [Day 2 学习记录](docs/learning/day-02.md)。
 
 Day 3 Agent Loop 的设计、实验及限制见 [Day 3 学习记录](docs/learning/day-03.md)。
+
+最新顺序、工时、缓冲与日期见 [学习路线](docs/learning-roadmap.md)。原 36 个学习日保留为历史任务单元，新增会话 CLI 与流式 Agent 专项；不再把一个 Issue 等同一个日历学习日。当前目标为2026-12-15前完成全部内容学习（12-14验收），每周6天、每天≤10h；逐日预算和实测校准规则见路线文档。
 
 ## 环境
 
@@ -90,9 +92,35 @@ pnpm start agent-demo "计算 1 + 2 + 3 + 4 + 5 + c"
 
 最终回答写入 stdout，模型请求次数和工具调用请求数写入 stderr；参数校验失败的工具调用也计入统计。普通工具失败作为完整 ToolResult 回传，用户取消停止运行，Provider 错误直接向上抛出，不自动重试。`complete` 只表示循环结束，不保证回答正确或完成用户目标。
 
-系统提示要求使用工具及不猜测未知变量，但模型可能提前回答或不遵循提示。当前 CLI 是单次任务，不等待变量补充；再次启动不会保留历史。调用方可显式传入上次返回的 messages 继续对话，新一次 run 的 steps 从头计数。
+系统提示要求使用工具及不猜测未知变量，但模型可能提前回答或不遵循提示。`agent-demo` 是单次任务，不等待变量补充；再次启动不会保留历史。调用方可显式传入上次返回的 messages 继续对话，新一次 run 的 steps 从头计数。
+
+## 交互式多轮与流式会话（Issue #45 / #46）
+
+```bash
+pnpm dev session
+# 或先 pnpm build，再运行编译产物
+pnpm start session --workspace . --model qwen3:8b --context-length 16384 --think false
+# 非流式对照：等待完整回答后一次性显示
+pnpm start session --workspace . --no-stream
+```
+
+每条提交启动一个 Agent 任务，默认流式显示文字，`--no-stream` 等完整响应后显示，可连续探索目录、读取文件、搜索代码和查询 Git 状态。`--workspace` 默认当前目录，启动时解析真实路径并验证目录；四个只读工具共用该边界。每轮最多10次模型请求，工具描述计入现有 ContextManager 的启发式预算。回答写入 stdout，错误与限制提示写入 stderr。
+
+目录最多10层、50条；读取默认64 KiB；搜索采用工具默认扫描预算。Git 状态暂时要求工作区为 Git 仓库根目录。`agent-demo` 继续保留 add 计算示例。
+
+- `/reset`：空闲时清空对话历史，保留系统规则。
+- `/multiline`：空闲时进入多行输入，保留空行与缩进；单独一行 `/send` 提交整段，`/cancel` 或 Ctrl+C 放弃草稿。多行模式中 `/reset`、`/exit` 等按正文处理；EOF 放弃草稿并退出。控制命令行不带缩进或额外空格，空白草稿不能提交。
+- `/exit` 或 EOF（空行时 Ctrl+D）：取消当前任务并等待收尾，然后退出。
+- Ctrl+C：运行时取消当前任务，收尾后可继续；空闲时退出。
+- 按回车提交时若任务仍在运行，普通输入与 `/reset` 会被丢弃并提示，不排队执行。
+
+正常返回（包括步数耗尽）保存完整历史；步数耗尽仍提示任务未完成。失败、取消或预算超限不保存当前轮，之前成功历史保留；历史回滚不会撤销已经执行的工具操作。预算超限可用 `/reset` 开始新对话。历史只在当前进程内保存，退出后不恢复。流式与非流式共用完整历史提交策略。
+
+当前状态：核心机制学习与实现完成，验收收尾待补。2026-11-03已有273项离线测试通过；真实仓库三轮带工具记录/延迟测量和关键组合测试待补，生命周期事件由#26承接。#45/#46未关闭，提交/PR不代表整体验收完成，交付状态以对应Git记录为准。详情见[会话验收记录](docs/learning/session-cli.md)。
 
 ## 检查
+
+ESLint 使用 JavaScript 与 TypeScript recommended 规则，并要求所有 `if/else`、`for`、`while` 等控制语句使用大括号（单行也不例外）、严格相等、禁止 `var`、优先 `const`、对象简写及禁止基本类型包装对象。缩进、引号、换行等格式由 Prettier 统一处理。
 
 ```bash
 pnpm typecheck

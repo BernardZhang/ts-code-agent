@@ -1,3 +1,4 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import { describe, expect, it } from 'vitest';
 import { readConfig } from './config.js';
 import { parsePlan } from './commands/structured-demo.js';
@@ -25,15 +26,16 @@ describe('configuration and structured output', () => {
       { timeoutMs: '0' },
       { contextLength: 'oops' },
       { baseUrl: 'file:///tmp' },
-    ])
+    ]) {
       expect(() => readConfig(options, {})).toThrow();
+    }
   });
   it('distinguishes JSON errors from schema errors', () => {
     expect(() => parsePlan('bad')).toThrow(
-      expect.objectContaining({ code: 'json' }),
+      expect.objectContaining({ code: ModelErrorCode.JSON }),
     );
     expect(() => parsePlan('{"task":"test","steps":[]}')).toThrow(
-      expect.objectContaining({ code: 'validation' }),
+      expect.objectContaining({ code: ModelErrorCode.VALIDATION }),
     );
     expect(parsePlan('{"task":"test","steps":["read"]}')).toEqual({
       task: 'test',

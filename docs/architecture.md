@@ -4,7 +4,7 @@
 
 ## 1. 设计原则
 
-采用 CLI 优先、少量 workspace 包、包内按能力分模块的结构。将通用 Agent 机制、外部协议接入和代码领域能力分离，以适配 6 周学习与交付节奏。
+采用 CLI 优先、少量 workspace 包、包内按能力分模块的结构。将通用 Agent 机制、外部协议接入和代码领域能力分离，以适配六阶段学习与交付节奏（当前排期见 learning-roadmap.md）。
 
 通过构造参数显式注入依赖，暂不引入 DI 容器。只有出现实际使用场景时才增加模块或扩展抽象。
 
@@ -155,14 +155,14 @@ sequenceDiagram
 
 ## 6. 后续模块演进
 
-| 时间            | 新增模块                                                                         |
-| --------------- | -------------------------------------------------------------------------------- |
-| 第 1 周 Day 2–6 | Core/tools、agent、context；创建 Code Agent 包并加入只读工具                     |
-| 第 2 周         | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server       |
-| 第 3 周         | Code Agent/retrieval；Adapters 中 Embedding 与 PostgreSQL 实现；infra/migrations |
-| 第 4 周         | Code Agent/planning、repository、editing、verification、permissions、prompts     |
-| 第 5 周         | evals/cases、runner、scorers；运行追踪与资源控制                                 |
-| 第 6 周         | experiments/langgraph、multi-agent；演示、部署与周复盘                           |
+| 阶段 | 模块演进                                                                                                              |
+| ---- | --------------------------------------------------------------------------------------------------------------------- |
+| A    | 在既有 Core/tools、agent、context 与 Code Agent 只读工具上，增加 CLI 会话、流式运行事件、追踪与预算、通用计划执行集成 |
+| B    | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server                                            |
+| C    | Code Agent/permissions、repository、editing、verification、planning；隔离后命令执行                                   |
+| D    | Code Agent/retrieval；Adapters Embedding 与 PostgreSQL；infra/migrations                                              |
+| E    | evals/cases、runner、scorers；故障注入及全量回归                                                                      |
+| F    | experiments/langgraph、multi-agent；模块整理、演示与交付                                                              |
 
 运行事件由 Core 定义，CLI 订阅并显示。后续扩展 `run.started`、`tool.started`、`approval.required` 等事件。日志供诊断，事件用于业务状态与评测，两者不能相互替代。
 
@@ -170,17 +170,17 @@ Checkpoint 保存版本化、可序列化状态；不保存工具函数、网络
 
 未来 API 管理任务生命周期，Web 订阅对外事件，新增 contracts 通信 Schema。当前仅保留这一方向，不实现后台任务服务或网络协议。
 
-### 六周能力演进
+### 六阶段能力演进
 
 下图表示交付顺序，不表示模块之间的代码依赖。每阶段在前一阶段可运行成果上扩展；框架和多 Agent 实验保留在独立实验目录。
 
 ```mermaid
 flowchart LR
-    W1["第 1 周<br/>模型接入、工具、Agent Loop"] --> W2["第 2 周<br/>MCP、Workflow、恢复与审批"]
-    W2 --> W3["第 3 周<br/>检索、记忆与检索评测"]
-    W3 --> W4["第 4 周<br/>编辑、命令与验证闭环"]
-    W4 --> W5["第 5 周<br/>评测、追踪、权限与隔离"]
-    W5 --> W6["第 6 周<br/>对照实验、演示与交付"]
+    A["阶段 A<br/>会话、流式、追踪、计划与预算"] --> B["阶段 B<br/>MCP、Workflow、恢复与审批"]
+    B --> C["阶段 C<br/>权限、隔离、编辑与验证闭环"]
+    C --> D["阶段 D<br/>检索、记忆与检索评测"]
+    D --> E["阶段 E<br/>任务评测与故障回归"]
+    E --> F["阶段 F<br/>框架对照、演示与交付"]
 ```
 
 ## 7. 验证策略
@@ -206,7 +206,7 @@ Core/tools 提供通用工具描述、运行时校验接口、结果联合类型
 
 ModelMessage 按角色区分普通消息、带 toolCalls 的 assistant 消息及带工具名的 tool 结果。Adapters/ollama 负责 Core 与 Ollama 字段转换及响应边界校验；不执行工具。
 
-CLI tools-demo 装配 Provider、注册表和执行器，按“首次生成、顺序执行工具、回传全部结果、再次生成”运行。流式工具事件尚未设计，因此 stream 显式拒绝工具请求及意外工具响应。Agent Loop 留待 Day 3。
+CLI tools-demo 装配 Provider、注册表和执行器，按“首次生成、顺序执行工具、回传全部结果、再次生成”运行。该节记录Day2历史基线，当时stream拒绝工具请求；当前Provider已支持Ollama原生流式工具对象，见下文#45/#46状态。Agent Loop在Day3实现。
 
 ToolExecutor 以停止 Promise 与工具 Promise 竞争，向工具转发组合后的取消信号并清理资源。取消为协作式，不提供进程隔离、强制终止或事务回滚。
 
@@ -232,9 +232,19 @@ Adapters/context 提供 UTF-8 JSON 字节数加固定开销的启发式估算；
 
 Runner 每轮将裁剪结果传入独立模型请求，后续回答和工具结果追加到完整历史。context-demo 将最新演示计划作为 system 保留；plan-demo 使用 JSON Schema 与 Zod 生成并校验初始计划。当前无计划自动执行、轮内压缩、摘要或持久化逐轮请求快照。细节与验证见 docs/learning/day-04.md。
 
-### Day 6 已确认集成安排
+### 原 Issue #6 的阶段 A 集成安排
 
-通用 TaskPlanner 接入 Agent 主流程已排入 Day 6 / Issue #6，尚未实现。CLI 装配初始规划与运行依赖，执行过程通过校验后的显式入口更新计划；每轮用最新计划构建上下文并计入预算，完整历史另行保留。计划更新应关联工具结果，不能以模型普通回答替代执行证据。具体接口在 Day 6 实施时确定，Core 不依赖具体外部模型接入。范围与验收见 [Day 6 任务范围](day-06-plan.md)。
+通用 TaskPlanner 接入 Agent 主流程保留在 Issue #6，按新路线安排在阶段 A 的会话、流式与追踪基线之后，尚未实现。CLI 装配初始规划与运行依赖，执行过程通过校验后的显式入口更新计划；每轮用最新计划构建上下文并计入预算，完整历史另行保留。计划更新应关联工具结果，不能以模型普通回答替代执行证据。具体接口在 Day 6 实施时确定，Core 不依赖具体外部模型接入。范围与验收见 [Day 6 任务范围](day-06-plan.md)。
+
+### 会话与流式的边界
+
+CLI 会话管理输入和内存历史，单次 Agent run 管理当前任务和步数；各自持有独立取消生命周期。Core 统一事件描述文本增量、工具执行及结束，Adapters 映射具体 Provider 流协议，CLI 消费事件显示并由 TraceCollector 记录。会话失败后的半轮历史需显式提交/回滚策略，不得带入缺少工具结果的历史；历史回滚不撤销副作用。Checkpoint 后续保存版本化可恢复状态，检索式记忆另在阶段 D 实现，三者不混用。流式基本链路已实现；追踪与工具/任务生命周期事件仍由#26补齐。
+
+Issue #45 当前实现：`commands/session.ts` 验证 `--workspace`（默认当前目录），装配 Provider、四个只读仓库工具、预算与 Runner；`session/agent-session.ts` 管理内存历史、状态与每轮 AbortController；`session/console-session.ts` 接收 readline 事件、显示结果和处理退出。正常返回才提交整轮历史（包含 max_steps），失败或取消保留之前历史。忙碌判断发生在按回车提交时，不排队；退出先关闭会话并取消当前任务，等待收尾后拆除监听器。主入口在 session 命令运行期间移交 SIGINT 处理，避免同时触发单次命令取消器。
+
+### 最新倒排容量
+
+学习顺序仍按上述六阶段，但日历改为2026-10-28至12-14共41个学习日，每日最多10h。任务表的369h是目标主线预算，另有41h缓冲；原425h初估尚需实测校准，不能由容量倒推证明一定可完成。#45/#46结束时先校准，再按周更新。此排期调整不改变Core/Adapters/CLI依赖边界，也不省略取消、完整工具历史、权限或独立验证。
 
 ### Day 5 文本搜索实现
 
@@ -253,3 +263,9 @@ Code Agent 将 Git 状态分成 git-status（ToolDefinition 装配）、git-stat
 CLI 通过 @ts-code-agent/code-agent 公开入口引入四个工具工厂，以同一真实工作区路径创建工具，注册到 Core ToolRegistry，由既有 ToolExecutor 和 AgentRunner 调度。独立 repo-demo 命令保留 agent-demo 加法学习示例，复用 bootstrap 和启发式 ContextManager；没有在 Core 增加文件系统依赖。提示要求模型依据工具证据、说明截断和失败；提示约束不等于结果验证或文件内容隔离保证。Day 6 的计划执行集成不在此命令本次实现范围内。
 
 CLI 的 RepoToolExecutor 继承既有 ToolExecutor，仅包装调用前后诊断，不改变 Core 的工具执行语义；可选诊断直接写 stderr，不持久化工具输入输出。
+
+### #45 / #46 当前交付边界（2026-11-03）
+
+session默认流式，--no-stream保留非流式对照；Runner的stream选项选择请求路径，两者共用工具调度、步数和上下文逻辑。Provider累积完整文字/工具调用后通过DONE.result交给Runner，文本增量经AgentSession回调传递给终端。MODEL_FINISHED在一次响应完整消费、检查取消和协议之后发送；并非整个任务完成。工具开始/结束及任务终态、稳定关联标识仍待#26，不能宣称追踪体系已经实现。
+
+核心机制学习与实现完成，真实三轮带工具/耗时证据和组合测试仍待验收；完整状态见[会话验收记录](learning/session-cli.md)。

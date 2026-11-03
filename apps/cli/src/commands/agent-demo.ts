@@ -2,7 +2,6 @@ import {
   estimateMessageTokens,
   estimateToolDefinitionTokens,
 } from '@ts-code-agent/adapters';
-import { z } from 'zod';
 import {
   AgentRunner,
   ContextManager,
@@ -11,29 +10,12 @@ import {
   ToolExecutor,
   ToolRegistry,
   type ModelRequest,
-  type ToolDefinition,
 } from '@ts-code-agent/core';
 import type { Config } from '../config.js';
 import { bootstrap } from '../bootstrap.js';
+import { addTool } from '../tools/add.js';
 
 const RESERVED_OUTPUT_TOKENS = 1024;
-
-const addInputSchema = z.object({
-  a: z.number(),
-  b: z.number(),
-});
-
-type AddInput = z.infer<typeof addInputSchema>;
-
-const addTool: ToolDefinition<AddInput, number> = {
-  name: 'add',
-  description: '计算两个数字之和',
-  inputSchema: addInputSchema,
-  parameters: z.toJSONSchema(addInputSchema),
-  execute: async (input: AddInput) => {
-    return input.a + input.b;
-  },
-};
 
 export async function agentDemo(
   prompt: string,

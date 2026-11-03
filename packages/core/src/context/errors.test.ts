@@ -14,7 +14,9 @@ const captureError = (action: () => unknown): ContextError => {
   try {
     action();
   } catch (error) {
-    if (!(error instanceof ContextError)) throw error;
+    if (!(error instanceof ContextError)) {
+      throw error;
+    }
     return error;
   }
   throw new Error('预期抛出 ContextError');

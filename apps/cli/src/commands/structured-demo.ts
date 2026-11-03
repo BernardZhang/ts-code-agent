@@ -1,3 +1,4 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import { EMessageRole, ModelError } from '@ts-code-agent/core';
 import { z } from 'zod';
 import { bootstrap } from '../bootstrap.js';
@@ -15,20 +16,31 @@ export function parsePlan(text: string) {
   try {
     raw = JSON.parse(text);
   } catch (cause) {
-    throw new ModelError('json', '模型输出不是合法 JSON。', { cause });
+    throw new ModelError(ModelErrorCode.JSON, '模型输出不是合法 JSON。', {
+      cause,
+    });
   }
   const parsed = planSchema.safeParse(raw);
-  if (!parsed.success)
-    throw new ModelError('validation', '模型 JSON 不符合任务规划 Schema。', {
-      cause: parsed.error,
-    });
+  if (!parsed.success) {
+    throw new ModelError(
+      ModelErrorCode.VALIDATION,
+      '模型 JSON 不符合任务规划 Schema。',
+      {
+        cause: parsed.error,
+      },
+    );
+  }
   return parsed.data;
 }
 
 export async function structuredDemo(config: Config, signal: AbortSignal) {
   const { provider, request } = bootstrap(config, signal);
-  if (!provider.capabilities.structuredOutput)
-    throw new ModelError('unsupported', 'Provider 不支持结构化输出。');
+  if (!provider.capabilities.structuredOutput) {
+    throw new ModelError(
+      ModelErrorCode.UNSUPPORTED,
+      'Provider 不支持结构化输出。',
+    );
+  }
   const result = await provider.generate({
     ...request,
     messages: [

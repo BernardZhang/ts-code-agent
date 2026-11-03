@@ -1,10 +1,13 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import {
   ModelError,
   type ModelProvider,
   type ModelRequest,
   type ModelEvent,
   type ModelResult,
+  type ModelToolCall,
   EMessageRole,
+  EModelEventType,
 } from '@ts-code-agent/core';
 import { mapResponse } from './mapper.js';
 import { parseNdjson } from './stream-parser.js';
@@ -28,7 +31,9 @@ export class OllamaProvider implements ModelProvider {
     let timedOut = false;
     const cancel = () => controller.abort();
     request.signal?.addEventListener('abort', cancel, { once: true });
-    if (request.signal?.aborted) cancel();
+    if (request.signal?.aborted) {
+      cancel();
+    }
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -38,14 +43,26 @@ export class OllamaProvider implements ModelProvider {
     return {
       signal: controller.signal,
       error: (cause: unknown): Error => {
-        if (request.signal?.aborted)
-          return new ModelError('cancelled', '请求已取消。', { cause });
-        if (timedOut)
-          return new ModelError('timeout', '模型请求超时。', { cause });
-        if (cause instanceof ModelError) return cause;
-        return new ModelError('network', '无法连接或读取 Ollama 服务。', {
-          cause,
-        });
+        if (request.signal?.aborted) {
+          return new ModelError(ModelErrorCode.CANCELLED, '请求已取消。', {
+            cause,
+          });
+        }
+        if (timedOut) {
+          return new ModelError(ModelErrorCode.TIMEOUT, '模型请求超时。', {
+            cause,
+          });
+        }
+        if (cause instanceof ModelError) {
+          return cause;
+        }
+        return new ModelError(
+          ModelErrorCode.NETWORK,
+          '无法连接或读取 Ollama 服务。',
+          {
+            cause,
+          },
+        );
       },
       close: () => {
         clearTimeout(timer);
@@ -123,7 +140,7 @@ export class OllamaProvider implements ModelProvider {
     if (!response.ok) {
       await response.body?.cancel();
       throw new ModelError(
-        'http',
+        ModelErrorCode.HTTP,
         `Ollama HTTP ${response.status}；请检查服务及模型。`,
       );
     }
@@ -140,14 +157,22 @@ export class OllamaProvider implements ModelProvider {
       try {
         raw = JSON.parse(text);
       } catch (cause) {
-        throw new ModelError('protocol', 'Ollama 响应不是合法 JSON。', {
-          cause,
-        });
+        throw new ModelError(
+          ModelErrorCode.PROTOCOL,
+          'Ollama 响应不是合法 JSON。',
+          {
+            cause,
+          },
+        );
       }
       const result = mapResponse(raw);
 
-      if (!result.done)
-        throw new ModelError('protocol', '非流式响应没有结束标记。');
+      if (!result.done) {
+        throw new ModelError(
+          ModelErrorCode.PROTOCOL,
+          '非流式响应没有结束标记。',
+        );
+      }
       return {
         text: result.text,
         usage: result.usage,
@@ -162,39 +187,57 @@ export class OllamaProvider implements ModelProvider {
   }
 
   async *stream(request: ModelRequest): AsyncGenerator<ModelEvent> {
-    if (request.tools?.length) {
-      throw new ModelError(
-        'unsupported',
-        '当前不支持流式工具调用，请使用 generate。',
-      );
-    }
     const scope = this.scope(request);
     try {
       const response = await this.send(request, true, scope.signal);
-      if (!response.body)
-        throw new ModelError('protocol', 'Ollama 返回空响应流。');
+      if (!response.body) {
+        throw new ModelError(ModelErrorCode.PROTOCOL, 'Ollama 返回空响应流。');
+      }
+      let text = '';
+      const toolCalls: ModelToolCall[] = [];
       for await (const raw of parseNdjson(response.body)) {
         scope.signal.throwIfAborted();
         const item = mapResponse(raw);
 
         if (item.toolCalls?.length) {
-          throw new ModelError(
-            'unsupported',
-            '流式响应包含工具调用，当前无法处理。',
-          );
+          if (!request.tools?.length) {
+            throw new ModelError(
+              ModelErrorCode.UNSUPPORTED,
+              '未声明工具的流式请求收到意外工具调用。',
+            );
+          }
+          // Ollama 原生协议提供参数对象；每个块中的调用按到达顺序累积。
+          // 不拼接参数字符串，也不按工具名或内容去重。
+          toolCalls.push(...item.toolCalls);
         }
 
-        if (item.text) yield { type: 'text.delta', text: item.text };
+        if (item.text) {
+          text += item.text;
+          yield { type: EModelEventType.TEXT_DELTA, text: item.text };
+        }
+
+        // yield 会暂停生成器；消费方处理文字期间也可能取消或超时。
+        scope.signal.throwIfAborted();
+
         if (item.done) {
           yield {
-            type: 'done',
-            usage: item.usage,
-            ...(item.finishReason ? { finishReason: item.finishReason } : {}),
+            type: EModelEventType.DONE,
+            result: {
+              text,
+              usage: item.usage,
+              ...(item.finishReason === undefined
+                ? {}
+                : { finishReason: item.finishReason }),
+              ...(toolCalls.length ? { toolCalls } : {}),
+            },
           };
           return;
         }
       }
-      throw new ModelError('protocol', '响应流提前结束，缺少结束标记。');
+      throw new ModelError(
+        ModelErrorCode.PROTOCOL,
+        '响应流提前结束，缺少结束标记。',
+      );
     } catch (cause) {
       throw scope.error(cause);
     } finally {

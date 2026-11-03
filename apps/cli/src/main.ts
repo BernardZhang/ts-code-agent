@@ -1,3 +1,4 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import { Command, CommanderError } from 'commander';
 import { ContextError, ModelError } from '@ts-code-agent/core';
 import { ZodError } from 'zod';
@@ -9,6 +10,7 @@ import { agentDemo } from './commands/agent-demo.js';
 import { planDemo } from './commands/plan-demo.js';
 import { contextDemo } from './commands/context-demo.js';
 import { repoDemo } from './commands/repo-demo.js';
+import { session } from './commands/session.js';
 
 const controller = new AbortController();
 const cancel = () => controller.abort();
@@ -25,6 +27,25 @@ const configure = (command: Command) =>
     .option('--context-length <tokens>', '上下文长度')
     .option('--timeout-ms <ms>', '请求超时')
     .option('--think <boolean>', 'true 或 false');
+
+configure(
+  program
+    .command('session')
+    .description('交互式多轮只读仓库会话')
+    .option('--workspace <directory>', '只读工具工作区，默认当前目录')
+    .option('--no-stream', '关闭流式输出，使用完整响应'),
+).action(
+  async (options: ConfigOptions & { workspace?: string; stream: boolean }) => {
+    const config = readConfig(options);
+    // 会话自己区分“取消本轮”和“退出”；不能同时触发单次命令的取消器。
+    process.removeListener('SIGINT', cancel);
+    try {
+      await session(config, options.workspace, options.stream);
+    } finally {
+      process.once('SIGINT', cancel);
+    }
+  },
+);
 
 configure(
   program
@@ -92,11 +113,13 @@ configure(
 
 try {
   await program.parseAsync();
-  if (controller.signal.aborted) process.exitCode = 130;
+  if (controller.signal.aborted) {
+    process.exitCode = 130;
+  }
 } catch (error) {
   if (
     controller.signal.aborted ||
-    (error instanceof ModelError && error.code === 'cancelled')
+    (error instanceof ModelError && error.code === ModelErrorCode.CANCELLED)
   ) {
     process.stderr.write('请求已取消。\n');
     process.exitCode = 130;

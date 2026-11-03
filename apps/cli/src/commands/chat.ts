@@ -15,7 +15,9 @@ export async function chat(
   };
   if (stream) {
     for await (const event of provider.stream(input)) {
-      if (event.type === 'text.delta') process.stdout.write(event.text);
+      if (event.type === 'text.delta') {
+        process.stdout.write(event.text);
+      }
     }
     process.stdout.write('\n');
   } else {
