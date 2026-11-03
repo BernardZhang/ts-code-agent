@@ -1,8 +1,12 @@
 import { z } from 'zod';
 
 const booleanOption = z.preprocess((value) => {
-  if (value === 'true') return true;
-  if (value === 'false') return false;
+  if (value === 'true') {
+    return true;
+  }
+  if (value === 'false') {
+    return false;
+  }
   return value;
 }, z.boolean());
 

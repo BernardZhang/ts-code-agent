@@ -83,7 +83,9 @@ it('并行启动同轮工具，逆序完成仍按调用顺序回传，普通失�
   const starts: number[] = [];
   const { generate, runner } = setup(async (input) => {
     starts.push(input);
-    if (input === 1) await first;
+    if (input === 1) {
+      await first;
+    }
     if (input === 2) {
       releaseFirst();
       throw new Error('第二个失败');
@@ -134,7 +136,9 @@ it('并行取消通知所有已启动工具，不再请求模型', async () => {
   });
   const { generate, runner } = setup(async (_input, signal) => {
     signals.push(signal);
-    if (signals.length === 2) bothStarted();
+    if (signals.length === 2) {
+      bothStarted();
+    }
     return new Promise<number>(() => {});
   });
   generate.mockResolvedValueOnce({

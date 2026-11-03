@@ -24,10 +24,16 @@ const input: ModelRequest = {
 let streamed = '';
 let completed = false;
 for await (const event of provider.stream(input)) {
-  if (event.type === 'text.delta') streamed += event.text;
-  if (event.type === 'done') completed = true;
+  if (event.type === 'text.delta') {
+    streamed += event.text;
+  }
+  if (event.type === 'done') {
+    completed = true;
+  }
 }
-if (!completed || !streamed.trim()) throw new Error('流式响应验收失败。');
+if (!completed || !streamed.trim()) {
+  throw new Error('流式响应验收失败。');
+}
 const structured = await provider.generate({
   ...input,
   messages: [

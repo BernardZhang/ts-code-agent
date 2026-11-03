@@ -16,7 +16,9 @@ export const estimateMessageTokens: MessageTokenEstimator = (message) =>
 export function estimateToolDefinitionTokens(
   tools: readonly ToolDescription[],
 ): number {
-  if (tools.length === 0) return 0;
+  if (tools.length === 0) {
+    return 0;
+  }
   // 仅序列化公开描述，避免执行函数或调用方额外字段混入估算。
   const descriptions = tools.map(({ name, description, parameters }) => ({
     name,

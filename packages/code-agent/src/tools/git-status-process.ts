@@ -84,10 +84,14 @@ export function runGitStatus(
     };
     const onAbort = () => terminate();
     signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
+    if (signal.aborted) {
+      onAbort();
+    }
 
     const collect = (chunks: Buffer[], chunk: Buffer) => {
-      if (failure || signal.aborted) return;
+      if (failure || signal.aborted) {
+        return;
+      }
       outputBytes += chunk.length;
       if (outputBytes > maxOutputBytes) {
         failure = new GitStatusError(
@@ -118,10 +122,14 @@ export function runGitStatus(
     });
     child.on('close', (code, terminationSignal) => {
       signal.removeEventListener('abort', onAbort);
-      if (killTimer !== undefined) clearTimeout(killTimer);
+      if (killTimer !== undefined) {
+        clearTimeout(killTimer);
+      }
       try {
         signal.throwIfAborted();
-        if (failure) throw failure;
+        if (failure) {
+          throw failure;
+        }
         if (code !== 0) {
           const diagnostic = Buffer.concat(stderr).toString();
           throw new GitStatusError(

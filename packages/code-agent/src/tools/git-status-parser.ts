@@ -67,15 +67,20 @@ function parseStatus(value: string | undefined): EGitFileStatus {
   const status = Object.values(EGitFileStatus).find(
     (candidate) => candidate === value,
   );
-  if (status === undefined) throw new SyntaxError('Git 状态包含未知字符。');
+  if (status === undefined) {
+    throw new SyntaxError('Git 状态包含未知字符。');
+  }
   return status;
 }
 
 /** 解析完整的 git status --porcelain=v1 -z 输出，不修改或规范化路径。 */
 export function parseGitStatus(output: string): GitStatusEntry[] {
-  if (output.length === 0) return [];
-  if (!output.endsWith(NUL))
+  if (output.length === 0) {
+    return [];
+  }
+  if (!output.endsWith(NUL)) {
     throw new SyntaxError('Git 状态输出缺少结束分隔符。');
+  }
 
   const records = output.split(NUL);
   records.pop(); // 最后一个 NUL 分隔产生的空串，不是状态记录。

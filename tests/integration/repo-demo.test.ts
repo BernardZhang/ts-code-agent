@@ -37,7 +37,9 @@ const requests: Request[] = [];
 const events = new EventEmitter();
 const server = createServer(async (request, response) => {
   let body = '';
-  for await (const chunk of request) body += String(chunk);
+  for await (const chunk of request) {
+    body += String(chunk);
+  }
   const input = requestSchema.parse(JSON.parse(body));
   requests.push(input);
   if (input.model === EModel.HANG) {
@@ -92,8 +94,9 @@ beforeAll(async () => {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
-  if (!address || typeof address === 'string')
+  if (!address || typeof address === 'string') {
     throw new Error('missing address');
+  }
   url = `http://127.0.0.1:${address.port}`;
 });
 beforeEach(() => {

@@ -79,7 +79,9 @@ describe('TaskPlanner.createPlan', () => {
     expect(plan.steps).not.toBe(steps);
     const inputStep = steps.at(0);
     const outputStep = plan.steps.at(0);
-    if (!inputStep || !outputStep) throw new Error('测试需要一个步骤');
+    if (!inputStep || !outputStep) {
+      throw new Error('测试需要一个步骤');
+    }
     expect(outputStep).not.toBe(inputStep);
     inputStep.description = '输入修改';
     expect(outputStep.description).toBe('定位原因');
@@ -146,7 +148,9 @@ describe('TaskPlanner.updateStepStatus', () => {
       7,
       ETaskStepStatus.COMPLETED,
     );
-    for (const step of updated.steps) step.description = '修改返回值';
+    for (const step of updated.steps) {
+      step.description = '修改返回值';
+    }
     expect(plan).toEqual(before);
   });
 });
@@ -173,7 +177,9 @@ describe('TaskPlanner.replaceSteps', () => {
 
   it('拒绝替换步骤中的重复 ID', () => {
     const step = makeSteps()[0];
-    if (!step) throw new Error('测试需要一个步骤');
+    if (!step) {
+      throw new Error('测试需要一个步骤');
+    }
     expect(() => planner.replaceSteps(makePlan(), [step, { ...step }])).toThrow(
       '任务 ID 0 重复',
     );
@@ -198,7 +204,9 @@ describe('TaskPlanner.replaceSteps', () => {
     expect(replaced.steps).not.toBe(steps);
     const inputStep = steps.at(0);
     const outputStep = replaced.steps.at(0);
-    if (!inputStep || !outputStep) throw new Error('测试需要一个步骤');
+    if (!inputStep || !outputStep) {
+      throw new Error('测试需要一个步骤');
+    }
     expect(outputStep).not.toBe(inputStep);
     inputStep.description = '修改输入';
     expect(outputStep.description).toBe('定位原因');

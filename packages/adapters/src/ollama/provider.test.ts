@@ -1,6 +1,18 @@
+import { ModelErrorCode } from '@ts-code-agent/core';
 import { describe, expect, it, vi } from 'vitest';
 import { OllamaProvider } from './provider.js';
-import { EMessageRole, type ModelRequest } from '@ts-code-agent/core';
+import {
+  EMessageRole,
+  EModelEventType,
+  type ModelEvent,
+  type ModelRequest,
+} from '@ts-code-agent/core';
+
+const addDescription = {
+  name: 'add',
+  description: '计算两数之和',
+  parameters: { type: 'object' },
+};
 
 const request: ModelRequest = {
   model: 'test',
@@ -49,12 +61,13 @@ describe('Ollama provider', () => {
         ),
       );
     const events = [];
-    for await (const event of provider(fetcher).stream(request))
+    for await (const event of provider(fetcher).stream(request)) {
       events.push(event);
+    }
     expect(events).toEqual([
-      { type: 'text.delta', text: '你' },
-      { type: 'text.delta', text: '好' },
-      { type: 'done', usage: {} },
+      { type: EModelEventType.TEXT_DELTA, text: '你' },
+      { type: EModelEventType.TEXT_DELTA, text: '好' },
+      { type: EModelEventType.DONE, result: { text: '你好', usage: {} } },
     ]);
   });
 
@@ -68,11 +81,12 @@ describe('Ollama provider', () => {
       const consume = async () => {
         for await (const event of provider(
           vi.fn<typeof fetch>().mockResolvedValue(response),
-        ).stream(request))
+        ).stream(request)) {
           void event;
+        }
       };
       await expect(consume()).rejects.toMatchObject({
-        code: index === 0 ? 'http' : 'protocol',
+        code: index === 0 ? ModelErrorCode.HTTP : ModelErrorCode.PROTOCOL,
       });
     }
   });
@@ -82,12 +96,12 @@ describe('Ollama provider', () => {
       provider(
         vi.fn<typeof fetch>().mockResolvedValue(new Response('bad')),
       ).generate(request),
-    ).rejects.toMatchObject({ code: 'protocol' });
+    ).rejects.toMatchObject({ code: ModelErrorCode.PROTOCOL });
     await expect(
       provider(
         vi.fn<typeof fetch>().mockRejectedValue(new TypeError('connection')),
       ).generate(request),
-    ).rejects.toMatchObject({ code: 'network' });
+    ).rejects.toMatchObject({ code: ModelErrorCode.NETWORK });
   });
 
   it('honors pre-cancellation without sending a request', async () => {
@@ -96,7 +110,7 @@ describe('Ollama provider', () => {
     const fetcher = vi.fn<typeof fetch>();
     await expect(
       provider(fetcher).generate({ ...request, signal: controller.signal }),
-    ).rejects.toMatchObject({ code: 'cancelled' });
+    ).rejects.toMatchObject({ code: ModelErrorCode.CANCELLED });
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -110,7 +124,7 @@ describe('Ollama provider', () => {
         );
       });
     await expect(provider(hanging, 10).generate(request)).rejects.toMatchObject(
-      { code: 'timeout' },
+      { code: ModelErrorCode.TIMEOUT },
     );
     const controller = new AbortController();
     const pending = provider(hanging).generate({
@@ -118,7 +132,9 @@ describe('Ollama provider', () => {
       signal: controller.signal,
     });
     controller.abort();
-    await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    await expect(pending).rejects.toMatchObject({
+      code: ModelErrorCode.CANCELLED,
+    });
   });
 
   it('将工具描述传递给模型请求', async () => {
@@ -256,25 +272,136 @@ describe('Ollama provider', () => {
     });
   });
 
-  it('拒绝携带工具的流式请求，不发送 HTTP 请求', async () => {
-    const fetcher = vi.fn<typeof fetch>();
-
-    const streamEvents = provider(fetcher).stream({
+  it('跨块收集工具调用与文字，只在完成标记后发送一个完整结果', async () => {
+    const toolCall = { function: { name: 'add', arguments: { a: 12, b: 30 } } };
+    const chunks = [
+      {
+        ...item('先', false),
+        message: { ...item('先', false).message, tool_calls: [toolCall] },
+      },
+      {
+        ...item('计算', false),
+        message: { ...item('计算', false).message, tool_calls: [toolCall] },
+      },
+      {
+        ...item('。', true),
+        message: { ...item('。', true).message, tool_calls: [toolCall] },
+        eval_count: 8,
+        prompt_eval_count: 20,
+        done_reason: 'stop',
+      },
+    ];
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(chunks.map((chunk) => JSON.stringify(chunk)).join('\n')),
+      );
+    const events: ModelEvent[] = [];
+    for await (const event of provider(fetcher).stream({
       ...request,
-      tools: [
-        {
-          name: 'add',
-          description: '计算两数之和',
-          parameters: { type: 'object' },
+      tools: [addDescription],
+    })) {
+      events.push(event);
+    }
+    expect(events).toEqual([
+      { type: EModelEventType.TEXT_DELTA, text: '先' },
+      { type: EModelEventType.TEXT_DELTA, text: '计算' },
+      { type: EModelEventType.TEXT_DELTA, text: '。' },
+      {
+        type: EModelEventType.DONE,
+        result: {
+          text: '先计算。',
+          usage: { inputTokens: 20, outputTokens: 8 },
+          finishReason: 'stop',
+          // 同名且参数相同的三次独立调用也必须保留，不按内容去重。
+          toolCalls: Array.from({ length: 3 }, () => ({
+            name: 'add',
+            arguments: { a: 12, b: 30 },
+          })),
         },
-      ],
+      },
+    ]);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
+      stream: true,
+      tools: [{ function: addDescription }],
     });
+  });
 
-    await expect(streamEvents.next()).rejects.toMatchObject({
-      code: 'unsupported',
+  it('工具调用后提前断流，不发送 DONE', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...item('', false),
+          message: {
+            role: EMessageRole.ASSISTANT,
+            content: '',
+            tool_calls: [{ function: { name: 'add', arguments: {} } }],
+          },
+        }),
+      ),
+    );
+    const events: ModelEvent[] = [];
+    const consume = async () => {
+      for await (const event of provider(fetcher).stream({
+        ...request,
+        tools: [addDescription],
+      })) {
+        events.push(event);
+      }
+    };
+    await expect(consume()).rejects.toHaveProperty(
+      'code',
+      ModelErrorCode.PROTOCOL,
+    );
+    expect(events).toEqual([]);
+  });
+
+  it('工具参数不是对象时明确报协议错误', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...item('', true),
+          message: {
+            role: EMessageRole.ASSISTANT,
+            content: '',
+            tool_calls: [{ function: { name: 'add', arguments: '{"a":' } }],
+          },
+        }),
+      ),
+    );
+    await expect(
+      provider(fetcher)
+        .stream({ ...request, tools: [addDescription] })
+        .next(),
+    ).rejects.toHaveProperty('code', ModelErrorCode.PROTOCOL);
+  });
+
+  it('最终块文字输出后取消，不再发送完成事件，并释放读取器', async () => {
+    const controller = new AbortController();
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(
+          new TextEncoder().encode(
+            JSON.stringify(item('最后一段', true)) + '\n',
+          ),
+        );
+      },
     });
-
-    expect(fetcher).not.toHaveBeenCalled();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+    const stream = provider(fetcher).stream({
+      ...request,
+      signal: controller.signal,
+    });
+    expect((await stream.next()).value).toEqual({
+      type: EModelEventType.TEXT_DELTA,
+      text: '最后一段',
+    });
+    controller.abort();
+    await expect(stream.next()).rejects.toHaveProperty(
+      'code',
+      ModelErrorCode.CANCELLED,
+    );
+    expect(body.locked).toBe(false);
   });
 
   it('拒绝流式响应中的意外工具调用', async () => {
@@ -306,7 +433,7 @@ describe('Ollama provider', () => {
     const first = streamEvents.next();
 
     await expect(first).rejects.toMatchObject({
-      code: 'unsupported',
+      code: ModelErrorCode.UNSUPPORTED,
     });
 
     expect(fetcher).toHaveBeenCalled();

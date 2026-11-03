@@ -78,7 +78,9 @@ export function createReadFileTool(
             bytesRead,
           );
           signal.throwIfAborted();
-          if (result.bytesRead === 0) break;
+          if (result.bytesRead === 0) {
+            break;
+          }
           bytesRead += result.bytesRead;
         }
 

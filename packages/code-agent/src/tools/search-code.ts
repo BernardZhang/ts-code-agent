@@ -72,9 +72,12 @@ function buildPrefixTable(query: string): number[] {
   const table = new Array<number>(query.length).fill(0);
   let matched = 0;
   for (let i = 1; i < query.length; i += 1) {
-    while (matched > 0 && query[i] !== query[matched])
+    while (matched > 0 && query[i] !== query[matched]) {
       matched = table[matched - 1] ?? 0;
-    if (query[i] === query[matched]) matched += 1;
+    }
+    if (query[i] === query[matched]) {
+      matched += 1;
+    }
     table[i] = matched;
   }
   return table;
@@ -131,8 +134,9 @@ export function createSearchCodeTool(
         );
         const matchStart = matches.length;
         try {
-          if (!(await handle.stat()).isFile())
+          if (!(await handle.stat()).isFile()) {
             throw new TypeError('搜索目标必须是普通文件。');
+          }
           const decoder = new TextDecoder(UTF8_ENCODING, {
             fatal: true,
             ignoreBOM: true,
@@ -160,9 +164,12 @@ export function createSearchCodeTool(
               const slot = position % query.length;
               lines[slot] = line;
               columns[slot] = column;
-              while (matched > 0 && character !== query[matched])
+              while (matched > 0 && character !== query[matched]) {
                 matched = prefixTable[matched - 1] ?? 0;
-              if (character === query[matched]) matched += 1;
+              }
+              if (character === query[matched]) {
+                matched += 1;
+              }
               if (matched === query.length) {
                 const start = (position - query.length + 1) % query.length;
                 matches.push({
@@ -174,8 +181,9 @@ export function createSearchCodeTool(
                 });
                 matched = prefixTable[matched - 1] ?? 0;
                 // 达到上限即停止；不声称一定还存在其他匹配。
-                if (matches.length >= maxMatches)
+                if (matches.length >= maxMatches) {
                   stop(ESearchIncompleteReason.MATCH_LIMIT);
+                }
               }
               position += 1;
               if (character === '\n') {
@@ -209,7 +217,9 @@ export function createSearchCodeTool(
             try {
               text = decoder.decode(bytes, { stream: bytesRead !== 0 });
             } catch (error) {
-              if (!(error instanceof TypeError)) throw error;
+              if (!(error instanceof TypeError)) {
+                throw error;
+              }
               reasons.add(ESearchIncompleteReason.INVALID_UTF8);
               matches.splice(matchStart);
               break;
@@ -219,7 +229,9 @@ export function createSearchCodeTool(
               stop(ESearchIncompleteReason.BYTE_LIMIT);
               break;
             }
-            if (bytesRead === 0) break;
+            if (bytesRead === 0) {
+              break;
+            }
           }
         } finally {
           await handle.close();
@@ -234,20 +246,26 @@ export function createSearchCodeTool(
         for (let index = 0; index < queue.length && !stopped; index += 1) {
           signal.throwIfAborted();
           const directory = queue[index];
-          if (!directory) break;
+          if (!directory) {
+            break;
+          }
           const entries = await readdir(directory, { withFileTypes: true });
           entries.sort((a, b) =>
             a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
           );
           for (const entry of entries) {
             signal.throwIfAborted();
-            if (stopped) break;
+            if (stopped) {
+              break;
+            }
             if (visitedEntries >= maxEntries) {
               stop(ESearchIncompleteReason.ENTRY_LIMIT);
               break;
             }
             visitedEntries += 1;
-            if (entry.isSymbolicLink()) continue;
+            if (entry.isSymbolicLink()) {
+              continue;
+            }
             const entryPath = path.join(directory, entry.name);
             if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) {
               queue.push(await resolveWorkspacePath(rootRealPath, entryPath));

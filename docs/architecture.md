@@ -206,7 +206,7 @@ Core/tools 提供通用工具描述、运行时校验接口、结果联合类型
 
 ModelMessage 按角色区分普通消息、带 toolCalls 的 assistant 消息及带工具名的 tool 结果。Adapters/ollama 负责 Core 与 Ollama 字段转换及响应边界校验；不执行工具。
 
-CLI tools-demo 装配 Provider、注册表和执行器，按“首次生成、顺序执行工具、回传全部结果、再次生成”运行。流式工具事件尚未设计，因此 stream 显式拒绝工具请求及意外工具响应。Agent Loop 留待 Day 3。
+CLI tools-demo 装配 Provider、注册表和执行器，按“首次生成、顺序执行工具、回传全部结果、再次生成”运行。该节记录Day2历史基线，当时stream拒绝工具请求；当前Provider已支持Ollama原生流式工具对象，见下文#45/#46状态。Agent Loop在Day3实现。
 
 ToolExecutor 以停止 Promise 与工具 Promise 竞争，向工具转发组合后的取消信号并清理资源。取消为协作式，不提供进程隔离、强制终止或事务回滚。
 
@@ -238,7 +238,9 @@ Runner 每轮将裁剪结果传入独立模型请求，后续回答和工具结�
 
 ### 会话与流式的边界
 
-CLI 会话管理输入和内存历史，单次 Agent run 管理当前任务和步数；各自持有独立取消生命周期。Core 统一事件描述文本增量、工具执行及结束，Adapters 映射具体 Provider 流协议，CLI 消费事件显示并由 TraceCollector 记录。会话失败后的半轮历史需显式提交/回滚策略，不得带入缺少工具结果的历史；历史回滚不撤销副作用。Checkpoint 后续保存版本化可恢复状态，检索式记忆另在阶段 D 实现，三者不混用。阶段 A 仅规划这些接口职责，具体实现设计在相应任务开始时完成。
+CLI 会话管理输入和内存历史，单次 Agent run 管理当前任务和步数；各自持有独立取消生命周期。Core 统一事件描述文本增量、工具执行及结束，Adapters 映射具体 Provider 流协议，CLI 消费事件显示并由 TraceCollector 记录。会话失败后的半轮历史需显式提交/回滚策略，不得带入缺少工具结果的历史；历史回滚不撤销副作用。Checkpoint 后续保存版本化可恢复状态，检索式记忆另在阶段 D 实现，三者不混用。流式基本链路已实现；追踪与工具/任务生命周期事件仍由#26补齐。
+
+Issue #45 当前实现：`commands/session.ts` 验证 `--workspace`（默认当前目录），装配 Provider、四个只读仓库工具、预算与 Runner；`session/agent-session.ts` 管理内存历史、状态与每轮 AbortController；`session/console-session.ts` 接收 readline 事件、显示结果和处理退出。正常返回才提交整轮历史（包含 max_steps），失败或取消保留之前历史。忙碌判断发生在按回车提交时，不排队；退出先关闭会话并取消当前任务，等待收尾后拆除监听器。主入口在 session 命令运行期间移交 SIGINT 处理，避免同时触发单次命令取消器。
 
 ### 最新倒排容量
 
@@ -261,3 +263,9 @@ Code Agent 将 Git 状态分成 git-status（ToolDefinition 装配）、git-stat
 CLI 通过 @ts-code-agent/code-agent 公开入口引入四个工具工厂，以同一真实工作区路径创建工具，注册到 Core ToolRegistry，由既有 ToolExecutor 和 AgentRunner 调度。独立 repo-demo 命令保留 agent-demo 加法学习示例，复用 bootstrap 和启发式 ContextManager；没有在 Core 增加文件系统依赖。提示要求模型依据工具证据、说明截断和失败；提示约束不等于结果验证或文件内容隔离保证。Day 6 的计划执行集成不在此命令本次实现范围内。
 
 CLI 的 RepoToolExecutor 继承既有 ToolExecutor，仅包装调用前后诊断，不改变 Core 的工具执行语义；可选诊断直接写 stderr，不持久化工具输入输出。
+
+### #45 / #46 当前交付边界（2026-11-03）
+
+session默认流式，--no-stream保留非流式对照；Runner的stream选项选择请求路径，两者共用工具调度、步数和上下文逻辑。Provider累积完整文字/工具调用后通过DONE.result交给Runner，文本增量经AgentSession回调传递给终端。MODEL_FINISHED在一次响应完整消费、检查取消和协议之后发送；并非整个任务完成。工具开始/结束及任务终态、稳定关联标识仍待#26，不能宣称追踪体系已经实现。
+
+核心机制学习与实现完成，真实三轮带工具/耗时证据和组合测试仍待验收；完整状态见[会话验收记录](learning/session-cli.md)。
