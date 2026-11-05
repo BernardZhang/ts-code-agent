@@ -3,11 +3,13 @@ import {
   AgentRunner,
   ContextManager,
   EAgentStatus,
+  EModelEventType,
   EContextErrorCode,
   EMessageRole,
   ToolExecutor,
   ToolRegistry,
   ToolErrorCode,
+  type ModelEvent,
   type ModelProvider,
   type ModelResult,
 } from '@ts-code-agent/core';
@@ -30,8 +32,14 @@ function deferred<T>() {
   });
   return { promise, resolve: (value: T) => resolve(value) };
 }
-function setup(maxSteps = 3, contextManager?: ContextManager) {
+function setup(
+  maxSteps = 3,
+  contextManager?: ContextManager,
+  supportStream?: boolean,
+  registry = new ToolRegistry(),
+) {
   const generate = vi.fn<ModelProvider['generate']>();
+  const stream = vi.fn<ModelProvider['stream']>();
   const provider: ModelProvider = {
     capabilities: { structuredOutput: false },
     // Runner 会继续追加自己的请求数组；记录调用时快照，避免断言读到后续结果。
@@ -41,21 +49,22 @@ function setup(maxSteps = 3, contextManager?: ContextManager) {
         messages: structuredClone(request.messages),
       });
     },
-    stream() {
-      throw new Error('本任务不使用流式生成');
+    stream(request) {
+      return stream({
+        ...request,
+        messages: structuredClone(request.messages),
+      });
     },
   };
-  const runner = new AgentRunner(
-    provider,
-    new ToolExecutor(new ToolRegistry()),
-  );
+  const runner = new AgentRunner(provider, new ToolExecutor(registry));
   const session = new AgentSession(runner, {
     request: { model: MODEL, contextLength: 8192 },
     systemPrompt: SYSTEM_PROMPT,
     maxSteps,
+    ...(supportStream === undefined ? {} : { stream: supportStream }),
     ...(contextManager === undefined ? {} : { contextManager }),
   });
-  return { session, generate };
+  return { session, generate, stream };
 }
 
 describe('AgentSession', () => {
@@ -117,6 +126,90 @@ describe('AgentSession', () => {
     expect(session.history.at(-1)?.role).toBe(EMessageRole.TOOL);
     await session.submit('继续');
     expect(generate.mock.calls[1]?.[0].messages).toHaveLength(5);
+  });
+
+  it('流式与非流式 maxSteps 后保留完整工具历史，继续时重新计步且结果一致', async () => {
+    const toolReply: ModelResult = {
+      ...answer('查询中'),
+      toolCalls: [{ name: LOOKUP_TOOL, arguments: {} }],
+    };
+    const finalReply = answer('继续后的回答');
+    const expectedFirstHistory = [
+      { role: EMessageRole.SYSTEM, content: SYSTEM_PROMPT },
+      { role: EMessageRole.USER, content: '调用工具' },
+      {
+        role: EMessageRole.ASSISTANT,
+        content: '查询中',
+        toolCalls: [{ name: LOOKUP_TOOL, arguments: {} }],
+      },
+      {
+        role: EMessageRole.TOOL,
+        name: LOOKUP_TOOL,
+        content: JSON.stringify({ success: true, output: '查到证据' }),
+      },
+    ];
+    const runScenario = async (useStream: boolean) => {
+      const registry = new ToolRegistry();
+      const execute = vi.fn(async () => '查到证据');
+      registry.register({
+        name: LOOKUP_TOOL,
+        description: '固定查询工具',
+        parameters: {},
+        inputSchema: { safeParse: () => ({ success: true, data: {} }) },
+        execute,
+      });
+      const { session, generate, stream } = setup(
+        1,
+        undefined,
+        useStream,
+        registry,
+      );
+      generate
+        .mockResolvedValueOnce(toolReply)
+        .mockResolvedValueOnce(finalReply);
+      stream
+        .mockImplementationOnce(async function* (): AsyncGenerator<ModelEvent> {
+          yield { type: EModelEventType.TEXT_DELTA, text: '查询中' };
+          yield { type: EModelEventType.DONE, result: toolReply };
+        })
+        .mockImplementationOnce(async function* (): AsyncGenerator<ModelEvent> {
+          yield { type: EModelEventType.TEXT_DELTA, text: '继续后的' };
+          yield { type: EModelEventType.TEXT_DELTA, text: '回答' };
+          yield { type: EModelEventType.DONE, result: finalReply };
+        });
+      const requests = useStream ? stream : generate;
+      const first = await session.submit('调用工具');
+      expect(first.status).toBe(EAgentStatus.MAX_STEPS);
+      expect(first.steps).toBe(1);
+      expect(session.history).toEqual(expectedFirstHistory);
+      expect(session.state).toBe(ESessionState.IDLE);
+      expect(requests).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledTimes(1);
+
+      const second = await session.submit('继续');
+      expect(second.status).toBe(EAgentStatus.COMPLETE);
+      expect(second.steps).toBe(1);
+      expect(requests.mock.calls[1]?.[0].messages).toEqual([
+        ...expectedFirstHistory,
+        { role: EMessageRole.USER, content: '继续' },
+      ]);
+      expect(session.history).toEqual([
+        ...expectedFirstHistory,
+        { role: EMessageRole.USER, content: '继续' },
+        { role: EMessageRole.ASSISTANT, content: '继续后的回答' },
+      ]);
+      expect(session.state).toBe(ESessionState.IDLE);
+      expect(requests).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(useStream ? generate : stream).not.toHaveBeenCalled();
+      return {
+        first,
+        second,
+        history: session.history,
+        requests: requests.mock.calls.map(([request]) => request.messages),
+      };
+    };
+    expect(await runScenario(true)).toEqual(await runScenario(false));
   });
 
   it('Provider 在工具轮次后失败时回退整轮，保留更早成功历史', async () => {
@@ -181,6 +274,97 @@ describe('AgentSession', () => {
       { role: EMessageRole.SYSTEM, content: SYSTEM_PROMPT },
       { role: EMessageRole.USER, content: '新问题' },
     ]);
+  });
+
+  it('流式工具执行期间取消后不继续请求模型，下一轮仍可用', async () => {
+    const started = deferred<AbortSignal>();
+    const release = deferred<void>();
+    const toolFinished = deferred<void>();
+    const registry = new ToolRegistry();
+    registry.register({
+      name: LOOKUP_TOOL,
+      description: '等待取消的测试工具',
+      parameters: {},
+      inputSchema: {
+        safeParse: () => ({ success: true, data: {} }),
+      },
+      async execute(_input, { signal }) {
+        started.resolve(signal);
+        try {
+          await release.promise;
+          signal.throwIfAborted();
+          return '工具结果';
+        } finally {
+          toolFinished.resolve();
+        }
+      },
+    });
+    const { session, stream, generate } = setup(3, undefined, true, registry);
+    stream
+      .mockImplementationOnce(async function* (): AsyncGenerator<ModelEvent> {
+        yield { type: EModelEventType.DONE, result: answer('已有回答') };
+      })
+      .mockImplementationOnce(async function* (): AsyncGenerator<ModelEvent> {
+        yield {
+          type: EModelEventType.DONE,
+          result: {
+            ...answer('正在查询'),
+            toolCalls: [{ name: LOOKUP_TOOL, arguments: {} }],
+          },
+        };
+      })
+      .mockImplementationOnce(async function* (): AsyncGenerator<ModelEvent> {
+        yield { type: EModelEventType.DONE, result: answer('恢复回答') };
+      });
+    await session.submit('已有问题');
+    const committed = session.history;
+    const pending = session.submit('将被取消');
+    // 提前挂接拒绝处理，避免取消触发未处理的 Promise rejection。
+    const rejected = expect(pending).rejects.toHaveProperty(
+      'name',
+      'AbortError',
+    );
+    try {
+      const toolSignal = await started.promise;
+      const cancelledSignal = stream.mock.calls[1]?.[0].signal;
+      expect(toolSignal.aborted).toBe(false);
+      session.cancelCurrent();
+      expect(toolSignal.aborted).toBe(true);
+      expect(cancelledSignal?.aborted).toBe(true);
+      expect(session.state).toBe(ESessionState.RUNNING);
+      await expect(session.submit('太早提交')).rejects.toHaveProperty(
+        'code',
+        ESessionErrorCode.BUSY,
+      );
+      await rejected;
+      expect(session.state).toBe(ESessionState.IDLE);
+      expect(session.history).toEqual(committed);
+      expect(stream).toHaveBeenCalledTimes(2);
+
+      const result = await session.submit('新问题');
+      expect(result.status).toBe(EAgentStatus.COMPLETE);
+      const next = stream.mock.calls[2]?.[0];
+      expect(next?.signal).toBeDefined();
+      expect(next?.signal).not.toBe(cancelledSignal);
+      expect(next?.signal?.aborted).toBe(false);
+      expect(next?.messages).toEqual([
+        ...committed,
+        { role: EMessageRole.USER, content: '新问题' },
+      ]);
+      expect(session.history).toEqual([
+        ...committed,
+        { role: EMessageRole.USER, content: '新问题' },
+        { role: EMessageRole.ASSISTANT, content: '恢复回答' },
+      ]);
+      expect(session.state).toBe(ESessionState.IDLE);
+      expect(stream).toHaveBeenCalledTimes(3);
+      expect(generate).not.toHaveBeenCalled();
+    } finally {
+      session.cancelCurrent();
+      release.resolve();
+      await toolFinished.promise;
+      await rejected;
+    }
   });
 
   it('运行中拒绝重置和并发提交，取消空闲任务没有副作用', async () => {
@@ -268,6 +452,69 @@ describe('AgentSession', () => {
     expect(session.history).toHaveLength(1);
     expect(session.state).toBe(ESessionState.IDLE);
   });
+
+  it.each([true, false])(
+    '多轮裁剪后预算失败不污染历史，reset 后短输入可恢复（stream=%s）',
+    async (useStream) => {
+      // 固定估算：按字符计成本，验证预算行为，不依赖真实 tokenizer。
+      // 消息预算20；system + 当前短输入可容纳，再加旧完整轮次则放不下。
+      const contextManager = new ContextManager(
+        { contextWindow: 24, reservedOutputTokens: 3, toolDefinitionTokens: 1 },
+        (message) => message.content.length,
+      );
+      const { session, generate, stream } = setup(3, contextManager, useStream);
+      generate.mockResolvedValue(answer('回答'));
+      stream.mockImplementation(async function* (): AsyncGenerator<ModelEvent> {
+        yield { type: EModelEventType.DONE, result: answer('回答') };
+      });
+      const requests = useStream ? stream : generate;
+      await session.submit('第一轮短问题');
+      await session.submit('第二轮短问题');
+      expect(requests.mock.calls[1]?.[0].messages).toEqual([
+        { role: EMessageRole.SYSTEM, content: SYSTEM_PROMPT },
+        { role: EMessageRole.USER, content: '第二轮短问题' },
+      ]);
+      const committed = session.history;
+      expect(committed).toHaveLength(5);
+
+      const oversized = '长'.repeat(21);
+      await expect(session.submit(oversized)).rejects.toHaveProperty(
+        'code',
+        EContextErrorCode.BUDGET_EXCEEDED,
+      );
+      expect(requests).toHaveBeenCalledTimes(2);
+      expect(session.history).toEqual(committed);
+      expect(session.state).toBe(ESessionState.IDLE);
+
+      session.reset();
+      const initial = [{ role: EMessageRole.SYSTEM, content: SYSTEM_PROMPT }];
+      expect(session.history).toEqual(initial);
+      // reset 清除历史，但不会使同样放不下的输入变得合法。
+      await expect(session.submit(oversized)).rejects.toHaveProperty(
+        'code',
+        EContextErrorCode.BUDGET_EXCEEDED,
+      );
+      expect(requests).toHaveBeenCalledTimes(2);
+      expect(session.history).toEqual(initial);
+
+      const result = await session.submit('新问题');
+      expect(result.status).toBe(EAgentStatus.COMPLETE);
+      expect(result.steps).toBe(1);
+      expect(requests.mock.calls[2]?.[0]).toMatchObject({
+        model: MODEL,
+        contextLength: 8192,
+        messages: [...initial, { role: EMessageRole.USER, content: '新问题' }],
+      });
+      expect(session.history).toEqual([
+        ...initial,
+        { role: EMessageRole.USER, content: '新问题' },
+        { role: EMessageRole.ASSISTANT, content: '回答' },
+      ]);
+      expect(session.state).toBe(ESessionState.IDLE);
+      expect(requests).toHaveBeenCalledTimes(3);
+      expect(useStream ? generate : stream).not.toHaveBeenCalled();
+    },
+  );
 
   it('关闭是终态，关闭运行中的任务会取消且不提交历史', async () => {
     const { session, generate } = setup();

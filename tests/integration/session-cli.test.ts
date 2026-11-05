@@ -196,14 +196,14 @@ afterAll(async () => {
     server.close((error) => (error ? reject(error) : resolve())),
   );
 });
-function start(targetWorkspace = workspace, stream = true) {
+function start(targetWorkspace = workspace, stream = true, baseUrl = url) {
   const child = spawn(
     process.execPath,
     [
       'apps/cli/dist/main.js',
       'session',
       '--base-url',
-      url,
+      baseUrl,
       '--model',
       'session-test',
       '--workspace',
@@ -231,6 +231,77 @@ function start(targetWorkspace = workspace, stream = true) {
 }
 
 describe('session CLI', () => {
+  it('响应结束前就显示首段文字，随后继续显示尾段并正常完成', async () => {
+    const firstText = '首段提前显示';
+    const lastText = '尾段完成';
+    let finishResponse: (() => void) | undefined;
+    let responseEnded = false;
+    let receivedInput: RequestBody | undefined;
+    const streamingServer = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) {
+        body += String(chunk);
+      }
+      const input = requestSchema.parse(JSON.parse(body));
+      receivedInput = input;
+      response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+      // 仅发送未完成的增量，结束块由测试观察到终端首段后才放行。
+      finishResponse = () => {
+        if (responseEnded) {
+          return;
+        }
+        responseEnded = true;
+        response.end(
+          JSON.stringify({
+            done: true,
+            message: { role: EMessageRole.ASSISTANT, content: lastText },
+          }) + '\n',
+        );
+      };
+      response.write(
+        JSON.stringify({
+          done: false,
+          message: { role: EMessageRole.ASSISTANT, content: firstText },
+        }) + '\n',
+      );
+    });
+    streamingServer.listen(0, '127.0.0.1');
+    await once(streamingServer, 'listening');
+    const address = streamingServer.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('未获取服务地址');
+    }
+    const s = start(workspace, true, `http://127.0.0.1:${address.port}`);
+    try {
+      await vi.waitFor(() => expect(s.stdout()).toContain('> '));
+      s.child.stdin.write('验证实时显示\n');
+      await vi.waitFor(() => expect(s.stdout()).toContain(firstText));
+      expect(receivedInput?.stream).toBe(true);
+      expect(responseEnded).toBe(false);
+      expect(s.stdout()).not.toContain(lastText);
+      expect(finishResponse).toBeDefined();
+      finishResponse?.();
+      await vi.waitFor(() =>
+        expect(s.stdout()).toContain(firstText + lastText),
+      );
+      // 等任务回到输入状态，避免 /exit 在运行中被丢弃。
+      await vi.waitFor(() => expect(s.stdout().split('> ')).toHaveLength(3));
+      s.child.stdin.write('/exit\n');
+      const result = await s.done;
+      expect(result.code).toBe(0);
+      expect(result.stdout.split(firstText)).toHaveLength(2);
+      expect(result.stdout.split(lastText)).toHaveLength(2);
+    } finally {
+      finishResponse?.();
+      s.child.kill();
+      await s.done;
+      streamingServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        streamingServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it('多行输入作为一条消息提交，真实 search_code 匹配跨行内容', async () => {
     requests.length = 0;
     await writeFile(
