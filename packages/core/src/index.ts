@@ -12,3 +12,6 @@ export * from './agent/runner.js';
 export * from './context/manager.js';
 export * from './context/errors.js';
 export * from './planning/task-planner.js';
+
+export * from './trace/types.js';
+export * from './trace/collector.js';

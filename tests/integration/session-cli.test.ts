@@ -1,8 +1,15 @@
-import { ModelErrorCode } from '@ts-code-agent/core';
+import { EAgentEventType, ModelErrorCode } from '@ts-code-agent/core';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  rm,
+  writeFile,
+  readdir,
+  readFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -12,6 +19,7 @@ const LIST_DIRECTORY_TOOL_NAME = 'list_directory';
 const READ_FILE_TOOL_NAME = 'read_file';
 const SEARCH_CODE_TOOL_NAME = 'search_code';
 const GIT_STATUS_TOOL_NAME = 'git_status';
+import { ETraceFileRecordType } from '@ts-code-agent/adapters';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { EMessageRole } from '@ts-code-agent/core';
 
@@ -196,19 +204,25 @@ afterAll(async () => {
     server.close((error) => (error ? reject(error) : resolve())),
   );
 });
-function start(targetWorkspace = workspace, stream = true) {
+function start(
+  targetWorkspace = workspace,
+  stream = true,
+  baseUrl = url,
+  trace = false,
+) {
   const child = spawn(
     process.execPath,
     [
       'apps/cli/dist/main.js',
       'session',
       '--base-url',
-      url,
+      baseUrl,
       '--model',
       'session-test',
       '--workspace',
       targetWorkspace,
       ...(stream ? [] : ['--no-stream']),
+      ...(trace ? ['--trace'] : []),
     ],
     {
       env: { ...process.env, AGENT_TIMEOUT_MS: '3000' },
@@ -231,6 +245,77 @@ function start(targetWorkspace = workspace, stream = true) {
 }
 
 describe('session CLI', () => {
+  it('响应结束前就显示首段文字，随后继续显示尾段并正常完成', async () => {
+    const firstText = '首段提前显示';
+    const lastText = '尾段完成';
+    let finishResponse: (() => void) | undefined;
+    let responseEnded = false;
+    let receivedInput: RequestBody | undefined;
+    const streamingServer = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) {
+        body += String(chunk);
+      }
+      const input = requestSchema.parse(JSON.parse(body));
+      receivedInput = input;
+      response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+      // 仅发送未完成的增量，结束块由测试观察到终端首段后才放行。
+      finishResponse = () => {
+        if (responseEnded) {
+          return;
+        }
+        responseEnded = true;
+        response.end(
+          JSON.stringify({
+            done: true,
+            message: { role: EMessageRole.ASSISTANT, content: lastText },
+          }) + '\n',
+        );
+      };
+      response.write(
+        JSON.stringify({
+          done: false,
+          message: { role: EMessageRole.ASSISTANT, content: firstText },
+        }) + '\n',
+      );
+    });
+    streamingServer.listen(0, '127.0.0.1');
+    await once(streamingServer, 'listening');
+    const address = streamingServer.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('未获取服务地址');
+    }
+    const s = start(workspace, true, `http://127.0.0.1:${address.port}`);
+    try {
+      await vi.waitFor(() => expect(s.stdout()).toContain('> '));
+      s.child.stdin.write('验证实时显示\n');
+      await vi.waitFor(() => expect(s.stdout()).toContain(firstText));
+      expect(receivedInput?.stream).toBe(true);
+      expect(responseEnded).toBe(false);
+      expect(s.stdout()).not.toContain(lastText);
+      expect(finishResponse).toBeDefined();
+      finishResponse?.();
+      await vi.waitFor(() =>
+        expect(s.stdout()).toContain(firstText + lastText),
+      );
+      // 等任务回到输入状态，避免 /exit 在运行中被丢弃。
+      await vi.waitFor(() => expect(s.stdout().split('> ')).toHaveLength(3));
+      s.child.stdin.write('/exit\n');
+      const result = await s.done;
+      expect(result.code).toBe(0);
+      expect(result.stdout.split(firstText)).toHaveLength(2);
+      expect(result.stdout.split(lastText)).toHaveLength(2);
+    } finally {
+      finishResponse?.();
+      s.child.kill();
+      await s.done;
+      streamingServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        streamingServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it('多行输入作为一条消息提交，真实 search_code 匹配跨行内容', async () => {
     requests.length = 0;
     await writeFile(
@@ -473,4 +558,124 @@ describe('session CLI', () => {
       s.child.kill();
     }
   });
+});
+
+it.each([true, false])(
+  'CLI trace多轮、工具与错误留痕，正文不进入文件 stream=%s',
+  async (stream) => {
+    const root = await mkdtemp(path.join(temporaryPath, 'traced-'));
+    await writeFile(path.join(root, 'fixture.txt'), FIXTURE_CONTENT);
+    const s = start(root, stream, url, true);
+    try {
+      await vi.waitFor(() => expect(s.stdout()).toContain('> '));
+      s.child.stdin.write('PRIVATE_TRACE_PROMPT\n');
+      await vi.waitFor(() =>
+        expect(s.stderr().match(/追踪文件：/g)).toHaveLength(1),
+      );
+      s.child.stdin.write('模拟错误\n');
+      await vi.waitFor(() =>
+        expect(s.stderr().match(/追踪文件：/g)).toHaveLength(2),
+      );
+      s.child.stdin.write(TOOL_REQUEST + '\n');
+      await vi.waitFor(() =>
+        expect(s.stderr().match(/追踪文件：/g)).toHaveLength(3),
+      );
+      s.child.stdin.write('/exit\n');
+      const result = await s.done;
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('回答：PRIVATE_TRACE_PROMPT');
+      expect(result.stderr).toContain('工具开始：');
+      const directory = path.join(root, '.agent', 'traces');
+      const names = await readdir(directory);
+      expect(names).not.toContain('.writer.lock');
+      expect(names.filter((name) => name.endsWith('.jsonl'))).toHaveLength(3);
+      const text = (
+        await Promise.all(
+          names.map((name) => readFile(path.join(directory, name), 'utf8')),
+        )
+      ).join('');
+      expect(text).not.toContain('PRIVATE_TRACE_PROMPT');
+      expect(text).not.toContain(FIXTURE_CONTENT);
+      expect(text).toContain(EAgentEventType.RUN_FINISHED);
+      expect(text).toContain(ETraceFileRecordType.FOOTER);
+      for (const name of names) {
+        const result = await promisify(execFile)(process.execPath, [
+          'apps/cli/dist/main.js',
+          'trace-read',
+          path.join(directory, name),
+        ]);
+        expect(result.stderr).toBe('');
+        expect(result.stdout).toContain(ETraceFileRecordType.FOOTER);
+      }
+    } finally {
+      s.child.kill();
+      await s.done;
+    }
+  },
+);
+it('CLI追踪初始化失败继续回答，关闭追踪不创建目录', async () => {
+  for (const trace of [true, false]) {
+    const root = await mkdtemp(path.join(temporaryPath, 'trace-unavailable-'));
+    if (trace) {
+      await writeFile(path.join(root, '.agent'), 'do not overwrite');
+    }
+    const s = start(root, true, url, trace);
+    try {
+      await vi.waitFor(() => expect(s.stdout()).toContain('> '));
+      s.child.stdin.write('继续回答\n');
+      await vi.waitFor(() => expect(s.stdout()).toContain('回答：继续回答'));
+      s.child.stdin.write('/exit\n');
+      expect((await s.done).code).toBe(0);
+      if (trace) {
+        expect(s.stderr()).toContain('追踪不可用');
+      } else {
+        expect(await readdir(root)).not.toContain('.agent');
+      }
+    } finally {
+      s.child.kill();
+      await s.done;
+    }
+  }
+});
+
+it('trace开启时SIGINT取消后可继续，EOF收尾释放锁', async () => {
+  const root = await mkdtemp(path.join(temporaryPath, 'traced-cancel-'));
+  const s = start(root, true, url, true);
+  try {
+    await vi.waitFor(() => expect(s.stdout()).toContain('> '));
+    s.child.stdin.write('等待取消\n');
+    await vi.waitFor(async () => {
+      const dir = path.join(root, '.agent', 'traces');
+      const names = (await readdir(dir)).filter((name) =>
+        name.endsWith('.jsonl'),
+      );
+      const texts = await Promise.all(
+        names.map((name) => readFile(path.join(dir, name), 'utf8')),
+      );
+      expect(texts.join('')).toContain(EAgentEventType.MODEL_STARTED);
+    });
+    s.child.kill('SIGINT');
+    await vi.waitFor(() => expect(s.stderr()).toContain('当前任务已取消'));
+    s.child.stdin.write('取消后继续\n');
+    await vi.waitFor(() =>
+      expect(s.stderr().match(/追踪文件：/g)).toHaveLength(2),
+    );
+    s.child.stdin.end();
+    expect((await s.done).code).toBe(0);
+    const dir = path.join(root, '.agent', 'traces');
+    const names = await readdir(dir);
+    expect(names).not.toContain('.writer.lock');
+    expect(names).toHaveLength(2);
+    for (const name of names) {
+      const result = await promisify(execFile)(process.execPath, [
+        'apps/cli/dist/main.js',
+        'trace-read',
+        path.join(dir, name),
+      ]);
+      expect(result.stderr).toBe('');
+    }
+  } finally {
+    s.child.kill();
+    await s.done;
+  }
 });

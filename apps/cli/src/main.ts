@@ -1,3 +1,4 @@
+import { readTrace, ETraceReadItemType } from '@ts-code-agent/adapters';
 import { ModelErrorCode } from '@ts-code-agent/core';
 import { Command, CommanderError } from 'commander';
 import { ContextError, ModelError } from '@ts-code-agent/core';
@@ -32,20 +33,42 @@ configure(
   program
     .command('session')
     .description('交互式多轮只读仓库会话')
+    .option('--trace', '保存脱敏运行追踪到工作区 .agent/traces', false)
     .option('--workspace <directory>', '只读工具工作区，默认当前目录')
     .option('--no-stream', '关闭流式输出，使用完整响应'),
 ).action(
-  async (options: ConfigOptions & { workspace?: string; stream: boolean }) => {
+  async (
+    options: ConfigOptions & {
+      workspace?: string;
+      stream: boolean;
+      trace: boolean;
+    },
+  ) => {
     const config = readConfig(options);
     // 会话自己区分“取消本轮”和“退出”；不能同时触发单次命令的取消器。
     process.removeListener('SIGINT', cancel);
     try {
-      await session(config, options.workspace, options.stream);
+      await session(config, options.workspace, options.stream, options.trace);
     } finally {
       process.once('SIGINT', cancel);
     }
   },
 );
+
+program
+  .command('trace-read')
+  .description('流式读取脱敏追踪并报告完整性诊断')
+  .argument('<file>', 'JSONL 追踪文件')
+  .action(async (file: string) => {
+    for await (const item of readTrace(file, controller.signal)) {
+      if (item.type === ETraceReadItemType.DIAGNOSTIC) {
+        process.stderr.write(`[trace:${item.code}] line=${item.line}\n`);
+        process.exitCode = 1;
+      } else {
+        process.stdout.write(`${JSON.stringify(item.record)}\n`);
+      }
+    }
+  });
 
 configure(
   program

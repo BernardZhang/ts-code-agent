@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentRunOptions } from './runner.js';
-import { AgentRunner, EAgentEventType, type AgentEvent } from './runner.js';
+import {
+  AgentRunner,
+  EAgentEventType,
+  EAgentRunFailure,
+  EAgentStatus,
+  type AgentEvent,
+} from './runner.js';
 import { EModelEventType, type ModelEvent } from '../model/events.js';
 import { ModelErrorCode } from '../model/errors.js';
 import { EMessageRole } from '../model/messages.js';
@@ -50,10 +56,19 @@ describe('AgentRunner 流完成边界', () => {
         s.events.push(event);
       },
     });
-    expect(s.events).toEqual([
-      { type: EAgentEventType.TEXT_DELTA, text: '你好' },
-      { type: EAgentEventType.MODEL_FINISHED, step: 1, usage: answer.usage },
+    expect(s.events.map(({ type }) => type)).toEqual([
+      EAgentEventType.RUN_STARTED,
+      EAgentEventType.MODEL_STARTED,
+      EAgentEventType.TEXT_DELTA,
+      EAgentEventType.MODEL_FINISHED,
+      EAgentEventType.RUN_FINISHED,
     ]);
+    expect(s.events[2]).toMatchObject({ step: 1, text: '你好' });
+    expect(s.events[3]).toMatchObject({ step: 1, usage: answer.usage });
+    expect(s.events[4]).toMatchObject({
+      steps: 1,
+      status: EAgentStatus.COMPLETE,
+    });
   });
 
   it.each([true, false])(
@@ -75,7 +90,14 @@ describe('AgentRunner 流完成边界', () => {
           request: { ...s.options.request, signal: controller.signal },
         }),
       ).rejects.toBe(reason);
-      expect(s.events).toEqual([]);
+      expect(s.events.map(({ type }) => type)).toEqual([
+        EAgentEventType.RUN_STARTED,
+        EAgentEventType.MODEL_STARTED,
+        EAgentEventType.RUN_FINISHED,
+      ]);
+      expect(s.events.at(-1)).toMatchObject({
+        status: EAgentRunFailure.CANCELLED,
+      });
     },
   );
 
@@ -91,7 +113,12 @@ describe('AgentRunner 流完成边界', () => {
       'code',
       ModelErrorCode.PROTOCOL,
     );
-    expect(s.events).toEqual([]);
+    expect(s.events.map(({ type }) => type)).toEqual([
+      EAgentEventType.RUN_STARTED,
+      EAgentEventType.MODEL_STARTED,
+      EAgentEventType.RUN_FINISHED,
+    ]);
+    expect(s.events.at(-1)).toMatchObject({ status: EAgentRunFailure.FAILED });
     expect(s.execute).not.toHaveBeenCalled();
   });
 
@@ -102,7 +129,12 @@ describe('AgentRunner 流完成边界', () => {
       throw failure;
     });
     await expect(s.runner.run(s.options)).rejects.toBe(failure);
-    expect(s.events).toEqual([]);
+    expect(s.events.map(({ type }) => type)).toEqual([
+      EAgentEventType.RUN_STARTED,
+      EAgentEventType.MODEL_STARTED,
+      EAgentEventType.RUN_FINISHED,
+    ]);
+    expect(s.events.at(-1)).toMatchObject({ status: EAgentRunFailure.FAILED });
   });
 
   it('两次模型请求各发送一次完成通知，第一次仍需执行工具', async () => {
@@ -119,7 +151,9 @@ describe('AgentRunner 流完成边界', () => {
     });
     const result = await s.runner.run(s.options);
     expect(result.steps).toBe(2);
-    expect(s.events).toEqual([
+    expect(
+      s.events.filter(({ type }) => type === EAgentEventType.MODEL_FINISHED),
+    ).toMatchObject([
       { type: EAgentEventType.MODEL_FINISHED, step: 1, usage: answer.usage },
       { type: EAgentEventType.MODEL_FINISHED, step: 2, usage: answer.usage },
     ]);
@@ -131,7 +165,9 @@ describe('AgentRunner 流完成边界', () => {
       throw new Error('不应走流式路径');
     });
     await s.runner.run({ ...s.options, stream: false });
-    expect(s.events).toEqual([
+    expect(
+      s.events.filter(({ type }) => type === EAgentEventType.MODEL_FINISHED),
+    ).toMatchObject([
       { type: EAgentEventType.MODEL_FINISHED, step: 1, usage: answer.usage },
     ]);
   });
