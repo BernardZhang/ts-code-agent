@@ -41,6 +41,7 @@ export type ListDirectoryOutput = {
     path: string;
     type: EDirectoryEntryType;
   }>;
+  returnedCount: number;
   truncated: boolean;
 };
 
@@ -103,7 +104,8 @@ export function createListDirectoryTool(
 
   return {
     name: LIST_DIRECTORY_TOOL_NAME,
-    description: '列出路径下的所有文件和目录',
+    description:
+      '列出指定目录下的文件和目录。returnedCount 是本次返回条数；truncated 为 true 时，总条数未知。',
     inputSchema: listDirectoryInputSchema,
     parameters: z.toJSONSchema(listDirectoryInputSchema),
     // 遍历工作区目录，限制深度和返回条目数
@@ -190,8 +192,10 @@ export function createListDirectoryTool(
 
       signal.throwIfAborted();
 
+      const returnedEntries = entries.slice(0, maxEntryCount);
       return {
-        entries: entries.slice(0, maxEntryCount),
+        entries: returnedEntries,
+        returnedCount: returnedEntries.length,
         truncated: entries.length > maxEntryCount,
       };
     },

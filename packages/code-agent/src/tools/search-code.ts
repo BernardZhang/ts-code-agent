@@ -98,7 +98,7 @@ export function createSearchCodeTool(
   return {
     name: SEARCH_CODE_TOOL_NAME,
     description:
-      '在工作区 UTF-8 文件中搜索区分大小写的普通文本，支持多行、重叠匹配和 CRLF 归一化。返回匹配起始行列及文本片段；truncated 表示未完整搜索指定范围。',
+      '在工作区 UTF-8 文件中搜索区分大小写的普通文本，支持多行、重叠匹配和 CRLF 归一化。匹配结果的 path、line、column 分别表示文件路径、起始行和列，行列从 1 开始；另返回匹配文本片段。truncated 表示未完整搜索指定范围。',
     inputSchema: searchCodeInputSchema,
     parameters: z.toJSONSchema(searchCodeInputSchema),
     async execute(input, { signal }) {

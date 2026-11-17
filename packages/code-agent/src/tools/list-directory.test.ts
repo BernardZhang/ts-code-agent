@@ -43,6 +43,7 @@ describe('list-directory', () => {
     );
     expect(result).toEqual({
       entries: [{ path: 'main.ts', type: EDirectoryEntryType.FILE }],
+      returnedCount: 1,
       truncated: false,
     });
   });
@@ -88,7 +89,7 @@ describe('list-directory', () => {
             { path: '.' },
             context(),
           ),
-        ).resolves.toEqual({ entries: [], truncated: false });
+        ).resolves.toEqual({ entries: [], returnedCount: 0, truncated: false });
       });
 
       it('深度 1 仅返回直接子项，深度 2 不读取第三层', async () => {
@@ -121,6 +122,7 @@ describe('list-directory', () => {
           maxEntryCount: 2,
         }).execute({ path: '.' }, context());
         expect(limited.entries).toEqual(full.entries.slice(0, 2));
+        expect(limited.returnedCount).toBe(2);
         expect(limited.truncated).toBe(true);
       });
 
@@ -143,11 +145,13 @@ describe('list-directory', () => {
         });
         await expect(tool.execute({ path: '.' }, context())).resolves.toEqual({
           entries: [],
+          returnedCount: 0,
           truncated: false,
         });
         await writeFile(path.join(rootPath, 'file.txt'), '');
         await expect(tool.execute({ path: '.' }, context())).resolves.toEqual({
           entries: [],
+          returnedCount: 0,
           truncated: true,
         });
       });

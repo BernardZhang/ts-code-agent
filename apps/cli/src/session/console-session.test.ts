@@ -4,6 +4,7 @@ import {
   AgentRunner,
   EMessageRole,
   EModelEventType,
+  ETaskStepStatus,
   ModelError,
   ModelErrorCode,
   ToolExecutor,
@@ -11,14 +12,21 @@ import {
   type ModelProvider,
   type ModelResult,
 } from '@ts-code-agent/core';
+import { generateTaskPlan } from '../commands/plan-demo.js';
 import { AgentSession, ESessionState } from './agent-session.js';
 import { ConsoleSession, ESessionCommand } from './console-session.js';
+
+import {
+  EPlanUpdateOperation,
+  UPDATE_PLAN_TOOL_NAME,
+} from './update-plan-tool.js';
 
 const answer = (text: string): ModelResult => ({ text, usage: {} });
 function setup(
   terminal = false,
   maxSteps = 3,
   stream?: ModelProvider['stream'],
+  planning = false,
 ) {
   const input = new PassThrough();
   const output = new PassThrough();
@@ -33,7 +41,7 @@ function setup(
   });
   const generate = vi.fn<ModelProvider['generate']>();
   const provider: ModelProvider = {
-    capabilities: { structuredOutput: false },
+    capabilities: { structuredOutput: planning },
     generate,
     stream:
       stream ??
@@ -47,6 +55,16 @@ function setup(
       request: { model: 'console-test' },
       systemPrompt: '规则',
       maxSteps,
+      ...(planning
+        ? {
+            generatePlan: (goal, signal) =>
+              generateTaskPlan(
+                provider,
+                { model: 'console-test', signal },
+                goal,
+              ),
+          }
+        : {}),
       stream: stream !== undefined,
     },
   );
@@ -70,6 +88,153 @@ function setup(
 }
 
 describe('ConsoleSession', () => {
+  it('纯计算可以显式报告结果，无需仓库工具证据', async () => {
+    const s = setup(false, 3, undefined, true);
+    s.generate
+      .mockResolvedValueOnce(
+        answer(
+          JSON.stringify({
+            goal: '计算 1+2+3+c',
+            steps: ['计算 c=1', '计算 c=2'],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce({
+        ...answer(''),
+        toolCalls: ['1+2+3+1=7', '1+2+3+2=8'].map((summary, stepId) => ({
+          name: UPDATE_PLAN_TOOL_NAME,
+          arguments: {
+            operation: EPlanUpdateOperation.SET_STATUS,
+            stepId,
+            status: ETaskStepStatus.COMPLETED,
+            summary,
+          },
+        })),
+      })
+      .mockResolvedValueOnce(answer('c=1 时是 7，c=2 时是 8。'));
+    try {
+      s.input.write('/plan 计算 1+2+3+c，c 为 1 或 2\n');
+      await vi.waitFor(() => expect(s.stderr()).toContain('计划进度：2/2'));
+      expect(s.stderr()).toContain('模型报告 2 步');
+      expect(s.session.plan?.steps.map(({ status }) => status)).toEqual([
+        ETaskStepStatus.MODEL_REPORTED,
+        ETaskStepStatus.MODEL_REPORTED,
+      ]);
+      expect(
+        s.session.plan?.steps.some(
+          ({ status }) => status === ETaskStepStatus.COMPLETED,
+        ),
+      ).toBe(false);
+      expect(s.session.history.at(-2)?.content).toContain('1+2+3+2=8');
+    } finally {
+      s.input.end();
+      await s.done;
+    }
+  });
+
+  it('生成计划后立即执行，下一轮继续使用计划，重置后清空', async () => {
+    const s = setup(false, 3, undefined, true);
+    s.generate
+      .mockResolvedValueOnce(
+        answer(JSON.stringify({ goal: '分析 CLI', steps: ['定位入口'] })),
+      )
+      .mockResolvedValue(answer('已回答'));
+    try {
+      s.input.write('/plan   分析 CLI\n');
+      await vi.waitFor(() => expect(s.stderr()).toContain('定位入口'));
+      const [planningRequest, executionRequest] = s.generate.mock.calls.map(
+        ([request]) => request,
+      );
+      expect(planningRequest?.jsonSchema).toBeDefined();
+      expect(executionRequest?.signal).toBe(planningRequest?.signal);
+      expect(executionRequest?.messages).toEqual(
+        expect.arrayContaining([
+          { role: EMessageRole.USER, content: '分析 CLI' },
+          expect.objectContaining({
+            role: EMessageRole.SYSTEM,
+            content: expect.stringContaining('定位入口'),
+          }),
+        ]),
+      );
+      expect(
+        s.session.history.filter(
+          (message) => message.role === EMessageRole.SYSTEM,
+        ),
+      ).toHaveLength(1);
+      s.input.write('继续\n');
+      await vi.waitFor(() => expect(s.session.history).toHaveLength(5));
+      expect(s.generate.mock.calls[2]?.[0].messages).toContainEqual(
+        expect.objectContaining({
+          role: EMessageRole.SYSTEM,
+          content: expect.stringContaining('定位入口'),
+        }),
+      );
+      s.input.write('/reset\n');
+      expect(s.session.plan).toBeUndefined();
+    } finally {
+      s.input.end();
+      await s.done;
+    }
+  });
+
+  it('新计划执行失败时保留已提交的计划与历史', async () => {
+    const s = setup(false, 3, undefined, true);
+    s.generate
+      .mockResolvedValueOnce(
+        answer(JSON.stringify({ goal: '原计划', steps: ['旧步骤'] })),
+      )
+      .mockResolvedValueOnce(answer('已回答'))
+      .mockResolvedValueOnce(
+        answer(JSON.stringify({ goal: '新计划', steps: ['新步骤'] })),
+      )
+      .mockRejectedValueOnce(new Error('执行失败'));
+    try {
+      s.input.write('/plan 原计划\n');
+      await vi.waitFor(() => expect(s.session.plan?.goal).toBe('原计划'));
+      const history = s.session.history;
+      s.input.write('/plan 新计划\n');
+      await vi.waitFor(() => expect(s.stderr()).toContain('执行失败'));
+      expect(s.session.plan?.goal).toBe('原计划');
+      expect(s.session.history).toEqual(history);
+    } finally {
+      s.input.end();
+      await s.done;
+    }
+  });
+
+  it('默认流式执行仍先使用结构化生成建立计划', async () => {
+    const stream = vi.fn<ModelProvider['stream']>(async function* () {
+      yield { type: EModelEventType.TEXT_DELTA, text: '流式回答' };
+      yield { type: EModelEventType.DONE, result: answer('流式回答') };
+    });
+    const s = setup(false, 3, stream, true);
+    s.generate.mockResolvedValueOnce(
+      answer(JSON.stringify({ goal: '分析 CLI', steps: ['定位入口'] })),
+    );
+    try {
+      s.input.write('/plan 分析 CLI\n');
+      await vi.waitFor(() => expect(s.stderr()).toContain('定位入口'));
+      expect(s.generate).toHaveBeenCalledTimes(1);
+      expect(stream).toHaveBeenCalledTimes(1);
+      expect(s.stdout()).toContain('流式回答');
+    } finally {
+      s.input.end();
+      await s.done;
+    }
+  });
+
+  it('空计划命令不发起模型请求', async () => {
+    const s = setup(false, 3, undefined, true);
+    try {
+      s.input.write('/plan  \n');
+      expect(s.stderr()).toContain('/plan <目标>');
+      expect(s.generate).not.toHaveBeenCalled();
+    } finally {
+      s.input.end();
+      await s.done;
+    }
+  });
+
   it.each(['', '部分文字', '部分文字\n'])(
     '流式取消和失败后的排版与历史回滚：%j',
     async (text) => {

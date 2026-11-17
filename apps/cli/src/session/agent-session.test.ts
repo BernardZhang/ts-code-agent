@@ -1,14 +1,21 @@
+import {
+  READ_FILE_TOOL_NAME,
+  SEARCH_CODE_TOOL_NAME,
+} from '@ts-code-agent/code-agent';
 import { describe, expect, it, vi } from 'vitest';
 import {
   AgentRunner,
   ContextManager,
   EAgentStatus,
+  EAgentEventType,
+  ETaskStepStatus,
   EModelEventType,
   EContextErrorCode,
   EMessageRole,
   ToolExecutor,
   ToolRegistry,
   ToolErrorCode,
+  type AgentEvent,
   type ModelEvent,
   type ModelProvider,
   type ModelResult,
@@ -18,6 +25,11 @@ import {
   ESessionErrorCode,
   ESessionState,
 } from './agent-session.js';
+
+import {
+  EPlanUpdateOperation,
+  UPDATE_PLAN_TOOL_NAME,
+} from './update-plan-tool.js';
 
 const MODEL = 'session-test';
 const SYSTEM_PROMPT = '依据工具证据回答。';
@@ -37,6 +49,7 @@ function setup(
   contextManager?: ContextManager,
   supportStream?: boolean,
   registry = new ToolRegistry(),
+  generatePlan?: ConstructorParameters<typeof AgentSession>[1]['generatePlan'],
 ) {
   const generate = vi.fn<ModelProvider['generate']>();
   const stream = vi.fn<ModelProvider['stream']>();
@@ -61,6 +74,7 @@ function setup(
     request: { model: MODEL, contextLength: 8192 },
     systemPrompt: SYSTEM_PROMPT,
     maxSteps,
+    ...(generatePlan === undefined ? {} : { generatePlan }),
     ...(supportStream === undefined ? {} : { stream: supportStream }),
     ...(contextManager === undefined ? {} : { contextManager }),
   });
@@ -68,6 +82,253 @@ function setup(
 }
 
 describe('AgentSession', () => {
+  it('在下一次请求和下一轮公布成功的仓库工具引用，更换计划后清空', async () => {
+    const registry = new ToolRegistry();
+    for (const name of [READ_FILE_TOOL_NAME, LOOKUP_TOOL]) {
+      registry.register({
+        name,
+        description: '测试查询工具',
+        parameters: {},
+        inputSchema: { safeParse: () => ({ success: true, data: {} }) },
+        execute: async () => '文件内容',
+      });
+    }
+    const { session, generate } = setup(
+      3,
+      undefined,
+      undefined,
+      registry,
+      async (goal) => ({
+        goal,
+        steps: [
+          { id: 0, description: '定位入口', status: ETaskStepStatus.PENDING },
+        ],
+      }),
+    );
+    generate
+      .mockResolvedValueOnce({
+        ...answer(''),
+        toolCalls: [
+          READ_FILE_TOOL_NAME,
+          SEARCH_CODE_TOOL_NAME,
+          LOOKUP_TOOL,
+        ].map((name) => ({
+          name,
+          arguments: {},
+        })),
+      })
+      .mockResolvedValue(answer('回答'));
+    const events: AgentEvent[] = [];
+    await session.startPlan('分析 CLI', (event) => events.push(event));
+    const finished = events.find(
+      (event) =>
+        event.type === EAgentEventType.TOOL_CALL_FINISHED &&
+        event.toolName === READ_FILE_TOOL_NAME,
+    );
+    if (finished?.type !== EAgentEventType.TOOL_CALL_FINISHED) {
+      throw new Error('缺少工具完成事件');
+    }
+    const reference = JSON.stringify({
+      runId: finished.runId,
+      toolCallId: finished.toolCallId,
+      toolName: READ_FILE_TOOL_NAME,
+    });
+    const context = (index: number) =>
+      generate.mock.calls[index]?.[0].messages[0]?.content;
+    expect(context(0)).not.toContain(reference);
+    expect(context(1)).toContain(reference);
+    expect(context(1)).not.toContain('"toolCallId":"1:2"');
+    expect(context(1)).not.toContain('"toolCallId":"1:3"');
+    expect(generate.mock.calls[1]?.[0].messages).toContainEqual({
+      role: EMessageRole.TOOL,
+      name: READ_FILE_TOOL_NAME,
+      content: JSON.stringify({ success: true, output: '文件内容' }),
+    });
+    expect(session.plan?.steps[0]?.status).toBe(ETaskStepStatus.PENDING);
+    await session.submit('继续');
+    expect(context(2)).toContain(reference);
+    await session.startPlan('分析测试');
+    expect(context(3)).not.toContain(reference);
+  });
+
+  it.each([false, true])(
+    '模型通过 update_plan 提交进度，下一次请求看到已完成状态（stream=%s）',
+    async (useStream) => {
+      const registry = new ToolRegistry();
+      registry.register({
+        name: READ_FILE_TOOL_NAME,
+        description: '读取',
+        parameters: {},
+        inputSchema: { safeParse: () => ({ success: true, data: {} }) },
+        execute: async () => 'bin: dist/main.js',
+      });
+      const { session, generate, stream } = setup(
+        4,
+        undefined,
+        useStream,
+        registry,
+        async (goal) => ({
+          goal,
+          steps: [
+            { id: 0, description: '定位入口', status: ETaskStepStatus.PENDING },
+          ],
+        }),
+      );
+      stream.mockImplementation(async function* (request) {
+        yield { type: EModelEventType.DONE, result: await generate(request) };
+      });
+      let runId: string | undefined;
+      generate
+        .mockResolvedValueOnce({
+          ...answer(''),
+          toolCalls: [{ name: READ_FILE_TOOL_NAME, arguments: {} }],
+        })
+        .mockImplementationOnce(async (request) => {
+          expect(
+            request.tools?.some((tool) => tool.name === UPDATE_PLAN_TOOL_NAME),
+          ).toBe(true);
+          const systemMessages = request.messages.filter(
+            ({ role }) => role === EMessageRole.SYSTEM,
+          );
+          expect(systemMessages).toHaveLength(1);
+          expect(systemMessages[0]?.content).toContain(SYSTEM_PROMPT);
+          expect(systemMessages[0]?.content).toContain(UPDATE_PLAN_TOOL_NAME);
+          return {
+            ...answer(''),
+            toolCalls: [
+              {
+                name: UPDATE_PLAN_TOOL_NAME,
+                arguments: {
+                  operation: EPlanUpdateOperation.SET_STATUS,
+                  stepId: 0,
+                  status: ETaskStepStatus.COMPLETED,
+                  evidence: [{ runId, toolCallId: '1:1' }],
+                },
+              },
+            ],
+          };
+        })
+        .mockResolvedValueOnce(answer('入口为 dist/main.js'));
+      await session.startPlan('分析 CLI', (event) => {
+        if (event.type === EAgentEventType.RUN_STARTED) {
+          runId = event.runId;
+        }
+      });
+      expect(generate.mock.calls[2]?.[0].messages[0]?.content).toContain(
+        '"status":"completed"',
+      );
+      expect(session.plan?.steps[0]?.status).toBe(ETaskStepStatus.COMPLETED);
+    },
+  );
+
+  it('拒绝同一批工具的证据，下一次请求可用，运行失败时回滚进度', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: READ_FILE_TOOL_NAME,
+      description: '读取',
+      parameters: {},
+      inputSchema: { safeParse: () => ({ success: true, data: {} }) },
+      execute: async () => '入口',
+    });
+    const { session, generate } = setup(
+      4,
+      undefined,
+      undefined,
+      registry,
+      async (goal) => ({
+        goal,
+        steps: [
+          { id: 0, description: '定位入口', status: ETaskStepStatus.PENDING },
+        ],
+      }),
+    );
+    let runId = '';
+    const markComplete = (toolCallId: string) => ({
+      name: UPDATE_PLAN_TOOL_NAME,
+      arguments: {
+        operation: EPlanUpdateOperation.SET_STATUS,
+        stepId: 0,
+        status: ETaskStepStatus.COMPLETED,
+        evidence: [{ runId, toolCallId }],
+      },
+    });
+    generate
+      .mockResolvedValueOnce(answer('已找到计划'))
+      .mockImplementationOnce(async () => ({
+        ...answer(''),
+        toolCalls: [
+          { name: READ_FILE_TOOL_NAME, arguments: {} },
+          markComplete('1:1'),
+        ],
+      }))
+      .mockImplementationOnce(async (request) => {
+        expect(request.messages.at(-1)?.content).toContain(
+          ToolErrorCode.EXECUTION_FAILED,
+        );
+        expect(request.messages[0]?.content).toContain('"status":"pending"');
+        return { ...answer(''), toolCalls: [markComplete('1:1')] };
+      })
+      .mockImplementationOnce(async (request) => {
+        expect(request.messages[0]?.content).toContain('"status":"completed"');
+        throw new Error('模拟请求失败');
+      });
+    await session.startPlan('分析 CLI');
+    const committedHistory = session.history;
+    await expect(
+      session.submit('继续', (event) => {
+        if (event.type === EAgentEventType.RUN_STARTED) {
+          runId = event.runId;
+        }
+      }),
+    ).rejects.toThrow('模拟请求失败');
+    expect(session.plan?.steps[0]?.status).toBe(ETaskStepStatus.PENDING);
+    expect(session.history).toEqual(committedHistory);
+  });
+
+  it('替换后的最新计划超过预算时，下一次模型请求停止且本轮回滚', async () => {
+    const budget = new ContextManager(
+      {
+        contextWindow: 1500,
+        reservedOutputTokens: 0,
+        toolDefinitionTokens: 0,
+      },
+      (message) =>
+        message.role === EMessageRole.SYSTEM ? message.content.length : 1,
+    );
+    const { session, generate } = setup(
+      3,
+      budget,
+      undefined,
+      undefined,
+      async (goal) => ({
+        goal,
+        steps: [
+          { id: 0, description: '定位入口', status: ETaskStepStatus.PENDING },
+        ],
+      }),
+    );
+    generate.mockResolvedValueOnce(answer('已开始')).mockResolvedValueOnce({
+      ...answer(''),
+      toolCalls: [
+        {
+          name: UPDATE_PLAN_TOOL_NAME,
+          arguments: {
+            operation: EPlanUpdateOperation.REPLACE_STEPS,
+            steps: [{ description: '替换步骤'.repeat(600) }],
+          },
+        },
+      ],
+    });
+    await session.startPlan('仓库入口');
+    const before = { plan: session.plan, history: session.history };
+
+    await expect(session.submit('补充要求')).rejects.toMatchObject({
+      code: EContextErrorCode.BUDGET_EXCEEDED,
+    });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect({ plan: session.plan, history: session.history }).toEqual(before);
+  });
+
   it('连续两轮携带完整历史，每轮从头计步，不重复保存消息', async () => {
     const { session, generate } = setup();
     generate

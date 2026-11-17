@@ -2,6 +2,7 @@ export enum ETaskStepStatus {
   PENDING = 'pending',
   IN_PROGRESS = 'in_progress',
   COMPLETED = 'completed',
+  MODEL_REPORTED = 'model_reported',
 }
 
 export interface TaskStep {
