@@ -131,8 +131,9 @@ export async function createSessionTracing(
   let store: FileTraceStore;
   try {
     store = await FileTraceStore.open({ directory });
-  } catch {
+  } catch (error) {
     display('追踪不可用，Agent 将继续运行。');
+    console.error('追踪初始化失败：', error);
     return { runner, close: async () => {} };
   }
   let closePromise: Promise<void> | undefined;
