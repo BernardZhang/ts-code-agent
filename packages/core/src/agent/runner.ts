@@ -8,7 +8,8 @@ import type {
   ModelRequest,
   ModelResult,
 } from '../model/provider.js';
-import type { ToolExecutor } from '../tools/executor.js';
+import { ToolExecutor } from '../tools/executor.js';
+import type { ToolRegistry } from '../tools/registry.js';
 import { ToolErrorCode } from '../tools/result.js';
 
 export enum EToolExecution {
@@ -69,6 +70,10 @@ export interface AgentRunOptions {
   maxSteps: number;
   toolExecution?: EToolExecution;
   contextManager?: ContextManager;
+  /** Rebuilds transient system context before each model request. */
+  buildSystemMessage?: () => string;
+  /** Tools scoped to this run, advertised alongside the request tools. */
+  runTools?: ToolRegistry;
 
   stream?: boolean;
   onEvent?: (event: AgentEvent) => void;
@@ -151,18 +156,38 @@ export class AgentRunner {
     signal: AbortSignal,
     emit: EmitAgentEvent,
   ): Promise<AgentResult> {
+    const runTools = options.runTools;
+    const scopedExecutor = runTools ? new ToolExecutor(runTools) : undefined;
     const request: ModelRequest = {
       ...options.request,
       signal,
       messages: [...options.request.messages],
+      ...(runTools
+        ? { tools: [...(options.request.tools ?? []), ...runTools.list()] }
+        : {}),
     };
 
     // loop 限制最大访问模型次数maxSteps
     for (let step = 1; step <= options.maxSteps; step++) {
       signal.throwIfAborted();
+      const messages: ModelMessage[] = options.buildSystemMessage
+        ? [
+            {
+              role: EMessageRole.SYSTEM,
+              content: [
+                ...request.messages
+                  .filter((message) => message.role === EMessageRole.SYSTEM)
+                  .map(({ content }) => content),
+                options.buildSystemMessage(),
+              ].join('\n\n'),
+            },
+            ...request.messages.filter(
+              (message) => message.role !== EMessageRole.SYSTEM,
+            ),
+          ]
+        : request.messages;
       const contextMessages =
-        options.contextManager?.buildContext(request.messages) ??
-        request.messages;
+        options.contextManager?.buildContext(messages) ?? messages;
       emit({ type: EAgentEventType.MODEL_STARTED, step });
       signal.throwIfAborted();
       const modelResult = await this.generateResponse(
@@ -226,7 +251,11 @@ export class AgentRunner {
         let result;
         let content: string;
         try {
-          result = await this.toolExecutor.execute(tool.name, tool.arguments, {
+          const executor =
+            runTools?.get(tool.name) && scopedExecutor
+              ? scopedExecutor
+              : this.toolExecutor;
+          result = await executor.execute(tool.name, tool.arguments, {
             signal,
           });
           content = JSON.stringify(result, (_key, value: unknown) =>

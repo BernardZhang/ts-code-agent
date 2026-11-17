@@ -1,4 +1,9 @@
-import { EAgentEventType, ModelErrorCode } from '@ts-code-agent/core';
+import {
+  EAgentEventType,
+  ETaskStepStatus,
+  ModelErrorCode,
+  type AgentEvent,
+} from '@ts-code-agent/core';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { EAgentStatus, ContextError, ModelError } from '@ts-code-agent/core';
@@ -7,6 +12,7 @@ import { AgentSession, ESessionState } from './agent-session.js';
 export enum ESessionCommand {
   EXIT = '/exit',
   RESET = '/reset',
+  PLAN = '/plan',
   MULTILINE = '/multiline',
   SEND = '/send',
   CANCEL = '/cancel',
@@ -86,7 +92,7 @@ export class ConsoleSession {
       notifyClosed();
     };
 
-    const execute = async (text: string) => {
+    const execute = async (text: string, startPlan = false) => {
       let hasStreamedText = false;
       let outputEndsWithNewline = true;
       const writeDelta = (text: string) => {
@@ -107,7 +113,7 @@ export class ConsoleSession {
       };
 
       try {
-        const result = await this.session.submit(text, (event) => {
+        const onEvent = (event: AgentEvent) => {
           if (closing) {
             return;
           }
@@ -115,7 +121,10 @@ export class ConsoleSession {
           if (event.type === EAgentEventType.TEXT_DELTA) {
             writeDelta(event.text);
           }
-        });
+        };
+        const result = startPlan
+          ? await this.session.startPlan(text, onEvent)
+          : await this.session.submit(text, onEvent);
 
         if (closing) {
           return;
@@ -135,6 +144,28 @@ export class ConsoleSession {
           error.write(
             '已达到步数上限，当前任务尚未完成；完整调用历史已保存，可继续输入。\n',
           );
+        }
+        const plan = this.session.plan;
+        if (plan) {
+          const remaining = plan.steps.filter(
+            (step) =>
+              step.status !== ETaskStepStatus.COMPLETED &&
+              step.status !== ETaskStepStatus.MODEL_REPORTED,
+          );
+          const reportedCount = plan.steps.filter(
+            (step) => step.status === ETaskStepStatus.MODEL_REPORTED,
+          ).length;
+          const reported =
+            reportedCount > 0 ? `（模型报告 ${reportedCount} 步）` : '';
+          error.write(
+            `计划进度：${plan.steps.length - remaining.length}/${plan.steps.length}${reported}，${plan.goal}\n`,
+          );
+          if (remaining.length > 0) {
+            error.write('任务计划尚未完成，可继续输入。\n');
+          }
+          for (const step of remaining) {
+            error.write(`待完成 [${step.id}] ${step.description}\n`);
+          }
         }
       } catch (cause) {
         if (closing) {
@@ -217,9 +248,23 @@ export class ConsoleSession {
         return;
       }
       if (command === ESessionCommand.RESET) {
+        const hadPlan = this.session.plan !== undefined;
         this.session.reset();
-        output.write('对话历史已重置。\n');
+        output.write(
+          hadPlan ? '对话历史和任务计划已重置。\n' : '对话历史已重置。\n',
+        );
         prompt();
+        return;
+      }
+      const commandName = command.split(/\s+/, 1)[0];
+      if (commandName === ESessionCommand.PLAN) {
+        const goal = command.slice(ESessionCommand.PLAN.length).trim();
+        if (!goal) {
+          error.write(`用法：${ESessionCommand.PLAN} <目标>\n`);
+          prompt();
+          return;
+        }
+        pending = execute(goal, true);
         return;
       }
       if (command === ESessionCommand.MULTILINE) {

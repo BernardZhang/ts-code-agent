@@ -38,7 +38,7 @@ export function createGitStatusTool(
   return {
     name: GIT_STATUS_TOOL_NAME,
     description:
-      '查询工作区仓库的 Git 状态，区分暂存区、工作区、未跟踪和冲突状态；不返回被忽略的文件。工作区必须是仓库根目录。',
+      '查询工作区仓库的 Git 状态，区分暂存区、工作区、未跟踪和冲突状态；不返回被忽略的文件。工作区必须是仓库根目录。调用参数必须是空对象 {}。',
     inputSchema,
     parameters: z.toJSONSchema(inputSchema),
     async execute(input, { signal }) {
