@@ -269,3 +269,37 @@ CLI 的 RepoToolExecutor 继承既有 ToolExecutor，仅包装调用前后诊断
 session默认流式，--no-stream保留非流式对照；Runner的stream选项选择请求路径，两者共用工具调度、步数和上下文逻辑。Provider累积完整文字/工具调用后通过DONE.result交给Runner，文本增量经AgentSession回调传递给终端。MODEL_FINISHED在一次响应完整消费、检查取消和协议之后发送；并非整个任务完成。工具开始/结束及任务终态、稳定关联标识仍待#26，不能宣称追踪体系已经实现。
 
 核心机制学习与实现完成，真实三轮带工具/耗时证据和组合测试仍待验收；完整状态见[会话验收记录](learning/session-cli.md)。
+
+### Core 运行事件
+
+Runner 接受合法的步数配置后发出 RUN_STARTED。上下文构建成功后发出 MODEL_STARTED，完整消费模型响应后发出 MODEL_FINISHED。流式增量使用同一个 runId 和 step。工具调用就绪、交给执行器、执行器返回结果时分别发出 TOOL_CALL_READY、TOOL_CALL_STARTED、TOOL_CALL_FINISHED。toolCallId 在 run 内按步骤及调用位置分配，工具结果仍按模型原始调用顺序加入历史。事件里的 elapsedMs 是从 run 开始计算的单调耗时，工具事件只记录名称、关联标识和结果状态或错误码。
+
+RUN_FINISHED 对每次已开始的 run 发出一次，原因包括 complete、max_steps、failed、cancelled。工具普通失败、校验失败或超时可作为模型后续处理的工具结果。Runner 终态在本轮执行收尾时发出，Session 随后按既有规则提交历史。CLI 工具状态展示和 TraceCollector 接入仍待后续完成。
+
+## TraceCollector 存储分层设计（2026-11-09）
+
+拟由Core负责脱敏、摘要和事件规则，Adapters负责有界文件批处理及重读，CLI负责装配、状态展示与限时收尾。现有同步onEvent采用非阻塞入队及明确拒绝计数，持久化确认模式需独立调整回调和确认语义。
+
+范围、验收与默认参数见[TraceCollector设计草案](superpowers/specs/2026-11-09-trace-collector-design.md)。设计尚待审阅，功能尚未实施。
+
+### FileTraceSink 单文件实现（2026-11-10）
+
+Adapters 已实现 FileTraceSink：异步 open 使用 wx 排他创建及0600权限，不创建父目录；writeFully 推进输入偏移直到全部字节完成，零进展或非法进度报错；写入失败后禁止再写但允许关闭。close 缓存同一个 Promise，开始关闭后不再写入，关闭失败不自动重试。调用方须串行写入并等待写完后关闭，BatchTraceWriter 满足此约定；不承诺 fsync 持久化。
+
+本次仅完成单文件 Sink 与 Writer 集成。目录锁、配额、清理、恢复读取、CLI --trace 及首次失败通知钩子仍待实现。已确认 CLI 策略为追踪初始化或运行期写入失败时提示一次并继续 Agent；此策略尚未接入 CLI。
+
+### FileTraceStore 目录初始化增量（2026-11-10）
+
+已实现目录初始化与独占锁：新目录0700，已有目录必须为当前用户所有且权限0700，拒绝末级符号链接；.writer.lock 使用 wx/0600 创建，记录PID、随机token与创建时间。close幂等，释放前核对文件设备及inode，发现替换则拒绝删除替代锁并关闭自身句柄。该锁针对遵守协议的本地进程，不承诺防御同用户恶意路径替换。
+
+当前遇到任何已有锁均拒绝接管，包括异常遗留锁；尚未实现PID存活校验和安全回收，不代表锁恢复验收完成。Store暂不创建Writer，配额、保留期、活动文件管理及CLI装配继续待实现。
+
+### Trace全链路当前实现（2026-11-12，替代前述未完成状态）
+
+已接通Core TraceCollector、Adapters BatchTraceWriter/FileTraceSink/FileTraceStore/readTrace和CLI TracedAgentRunner。CLI预先创建runId与文件头，装饰Runner事件回调，脱敏记录同步入队，文本输出沿原ConsoleSession路径；finally限时等待Writer，session退出等待Store释放目录锁。Writer通过reserve回调同步预留磁盘预算，失败通知独立于Agent结果。读取器通过trace-read命令报告完整性。
+
+完整调用图、锁恢复与配额边界、真实模型证据见[Trace学习与验收](learning/trace-collector.md)。本实现为本地诊断追踪，不提供fsync、任务恢复或远程存储。
+
+### Trace关闭失败隔离修正（2026-11-15）
+
+Writer已等待所有在途写入，Sink开始关闭后禁止再写。Store在Sink关闭成功或拒绝后均结算文件实际占用，成功结算才解除活动保护；关闭pending/超时不执行结算。单个CLOSE_FAILED不再阻挡后续run或Store最终释放锁，Writer仍报告资源关闭失败。stat失败保留预留和目录保护。初始化失败路径也结算已创建文件，并保留初始化与关闭异常。此策略隔离目录可用性，不保证失败句柄已释放，也不自动重试关闭。

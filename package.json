@@ -17,6 +17,7 @@
     "zod": "4.1.12",
     "@eslint/js": "9.39.1",
     "@ts-code-agent/core": "workspace:*",
+    "@ts-code-agent/adapters": "workspace:*",
     "@types/node": "24.10.0",
     "eslint": "9.39.1",
     "prettier": "3.6.2",

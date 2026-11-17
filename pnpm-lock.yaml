@@ -11,6 +11,9 @@ importers:
       '@eslint/js':
         specifier: 9.39.1
         version: 9.39.1
+      '@ts-code-agent/adapters':
+        specifier: workspace:*
+        version: link:packages/adapters
       '@ts-code-agent/core':
         specifier: workspace:*
         version: link:packages/core

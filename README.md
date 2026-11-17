@@ -190,3 +190,13 @@ Git 工具当前要求工作区为仓库根目录，非仓库及仓库子目录�
 `repo-demo --trace-tools` 可选开启工具调用诊断，向 stderr 输出工具名、请求路径及 started/succeeded/failed 状态，失败时附工具错误码；路径与名称最多显示 200 个字符，使用 JSON 转义。诊断不输出搜索词、文件正文或完整工具结果，默认关闭。提示明确工作区根目录是 `.`，不是系统根目录 `/`；此提示不放宽路径边界。
 
 若出现 `context_budget_exceeded`，说明当前用户轮次的工具结果放不进上下文；可以缩小探索任务，或显式传入 `--context-length 16384`（需模型与本机资源支持）。命令不会自动扩大上下文或静默裁剪当前轮次。
+
+### 本地运行追踪
+
+`pnpm dev session --trace --workspace .` 开启脱敏JSONL追踪，默认关闭；可加 `--no-stream` 比较非流式行为。每轮文件位于工作区 `.agent/traces`，工具状态和保存结果输出到stderr，模型正文仍输出到stdout。
+
+使用 `pnpm dev trace-read .agent/traces/<文件名>.jsonl` 流式查看已校验元数据和完整性诊断。存在缺口、损坏或缺少终态/页脚时返回非零退出码；不输出模型或工具正文。
+
+默认7天保留期、256 MiB目录配额、1 MiB普通队列预算，满队列拒绝并统计丢弃。追踪失败不终止Agent。关闭等待5秒后可以报告超时，但后台IO可能继续，进程退出可能延迟；无fsync断电持久性保证。目录锁只允许一个会话管理同一目录，未知或无法确认失效的锁不会自动删除。
+
+模块调用图、故障语义、测试与真实模型验证见 [Trace学习与验收](docs/learning/trace-collector.md)。离线压测：`pnpm exec tsx scripts/trace-benchmark.ts`。
