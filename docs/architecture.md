@@ -160,7 +160,7 @@ sequenceDiagram
 | A    | 在既有 Core/tools、agent、context 与 Code Agent 只读工具上，增加 CLI 会话、流式运行事件、追踪与预算、通用计划执行集成 |
 | B    | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server                                            |
 | C    | Code Agent/permissions、repository、editing、verification、planning；隔离后命令执行                                   |
-| D    | Code Agent/retrieval；Adapters Embedding 与 PostgreSQL；infra/migrations                                              |
+| D    | Core/retrieval；Code Agent 工作区导入；Adapters 文档读取、Embedding 与 PostgreSQL                                     |
 | E    | evals/cases、runner、scorers；故障注入及全量回归                                                                      |
 | F    | experiments/langgraph、multi-agent；模块整理、演示与交付                                                              |
 
@@ -305,3 +305,38 @@ Adapters 已实现 FileTraceSink：异步 open 使用 wx 排他创建及0600权�
 ### Trace关闭失败隔离修正（2026-11-15）
 
 Writer已等待所有在途写入，Sink开始关闭后禁止再写。Store在Sink关闭成功或拒绝后均结算文件实际占用，成功结算才解除活动保护；关闭pending/超时不执行结算。单个CLOSE_FAILED不再阻挡后续run或Store最终释放锁，Writer仍报告资源关闭失败。stat失败保留预留和目录保护。初始化失败路径也结算已创建文件，并保留初始化与关闭异常。此策略隔离目录可用性，不保证失败句柄已释放，也不自动重试关闭。
+
+### RAG Embedding CLI 接入
+
+Core 定义独立 EmbeddingProvider 契约，Adapters 的 OllamaEmbeddingProvider
+使用 /api/embed 批量请求，并校验向量数量、维度及有限数值。
+CLI 的 embedding-config 集中读取模型与预期维度，embed-demo 装配导入和
+Provider，按 16 个片段顺序请求，共用任务 AbortSignal。
+全部请求成功后才输出摘要；此演示阶段在内存中消费向量。
+持久化命令 index-demo 和 vector-search 使用下述 pgvector 存储接入。
+
+### pgvector 存储接入
+
+Core/retrieval 定义通用文档类型、解析、分片、索引编排和 VectorStore 契约。
+Code Agent 的 ingestWorkspaceDocument 校验工作区路径，调用注入的
+TextFileReader 读取正文，再交给 Core 的 ingestDocument 规范化、生成文档身份、解析和分片。
+Adapters 的 readTextFile 负责本地普通文件的有界读取、严格 UTF-8 解码。
+CLI bootstrap 将 readTextFile 注入 ingestWorkspaceDocument，命令取得 ParsedDocument 后，
+交给 Core 的 indexDocument 调用注入的 EmbeddingProvider 与 VectorStore。
+CLI 装配 OllamaEmbeddingProvider 与 PostgresVectorStore。跨包通过公开入口导入，Adapters 使用 Core 的存储记录
+契约接收正文、向量及来源信息。
+
+数据库由 vector-init 显式创建两张专用表，document 保存资料集、文档版本、
+路径、实际模型标识与维度，chunk 保存向量及来源元数据。向量使用 pgvector
+vector 类型，CHECK 约束每行维度。入库前验证非零向量、有限 float32 数值及
+维度。查询在模型、维度和资料集过滤后做精确余弦排序，当前未创建近似索引。
+
+向量化完成后才开启数据库事务。事务通过 advisory transaction lock 串行替换
+同一逻辑文档，删除旧片段与插入新片段原子提交，空文档同样执行删除。
+每次操作有专属连接，失败或取消关闭连接，未提交事务自动回滚。
+提交交接期间的取消和断线无法证明服务器是否已提交，允许重复导入收敛。
+当前重复导入重算向量，尚未实现版本缓存或模型权重摘要追踪。
+本地 PostgreSQL 17 + pgvector 的启动配置位于 infra/compose.yaml。
+
+完整导入链路的真实模型验证、分批失败边界与验收命令见
+[文档切片、向量化与入库验收](learning/rag-ingestion.md)。

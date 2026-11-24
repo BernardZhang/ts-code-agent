@@ -13,3 +13,12 @@ export {
   TraceStoreError,
 } from './trace/file-store.js';
 export * from './trace/reader.js';
+export {
+  OllamaEmbeddingProvider,
+  type OllamaEmbeddingOptions,
+} from './ollama/embedding-provider.js';
+export {
+  PostgresVectorStore,
+  type PostgresVectorStoreOptions,
+} from './postgres/vector-store.js';
+export { readTextFile } from './documents/read-text-file.js';

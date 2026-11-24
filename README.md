@@ -202,3 +202,59 @@ Git 工具当前要求工作区为仓库根目录，非仓库及仓库子目录�
 默认7天保留期、256 MiB目录配额、1 MiB普通队列预算，满队列拒绝并统计丢弃。追踪失败不终止Agent。关闭等待5秒后可以报告超时，但后台IO可能继续，进程退出可能延迟；无fsync断电持久性保证。目录锁只允许一个会话管理同一目录，未知或无法确认失效的锁不会自动删除。
 
 模块调用图、故障语义、测试与真实模型验证见 [Trace学习与验收](docs/learning/trace-collector.md)。离线压测：`pnpm exec tsx scripts/trace-benchmark.ts`。
+
+### 文档向量化演示
+
+先安装具有 Embedding 能力的 Ollama 模型，并确认模型实际输出维度。
+模型与维度可通过命令参数提供，也可配置
+`AGENT_EMBEDDING_MODEL`、`AGENT_EMBEDDING_DIMENSIONS`。
+命令参数优先于环境变量，地址与超时沿用
+`AGENT_BASE_URL`、`AGENT_TIMEOUT_MS`。
+
+```bash
+pnpm dev embed-demo docs/spec.md --corpus-id project-docs --model <已安装的Embedding模型> --dimensions <模型实际输出维度>
+```
+
+命令按每批最多 16 个片段调用 Ollama，校验每个返回向量的维度，
+全部成功后输出路径、片段数、模型与维度的 JSON 摘要。
+空文档跳过模型请求。Ctrl+C 取消当前请求，超长输入明确失败。
+当前演示在内存中处理向量，数据库持久化与近邻检索继续由 #14 实现。
+
+### pgvector 文档入库和检索
+
+本地数据库使用 `infra/compose.yaml`，持久数据保存在 Docker 命名卷。
+在同一个终端按顺序执行，示例密码仅用于本机学习环境：
+
+```bash
+export AGENT_POSTGRES_PASSWORD=rag-local-dev
+export AGENT_DATABASE_URL=postgresql://postgres:rag-local-dev@127.0.0.1:15432/agent_rag
+export AGENT_EMBEDDING_MODEL=embeddinggemma
+export AGENT_EMBEDDING_DIMENSIONS=768
+
+docker compose -f infra/compose.yaml up -d --wait
+ollama pull embeddinggemma
+
+pnpm dev vector-init
+pnpm dev index-demo docs/spec.md --corpus-id project-docs
+pnpm dev vector-search "项目如何处理取消请求？" --corpus-id project-docs
+```
+
+`vector-init` 显式初始化扩展和专用表，使用有建表和扩展权限的账号。
+`index-demo` 在事务外生成全部向量，随后事务性替换同一资料集内的文档，
+重复导入覆盖旧片段，空文档清除旧片段。并发导入同一文档时，以数据库取得
+文档锁后的提交顺序为准。当前每次重算向量，未实现增量缓存。
+
+`vector-search` 按实际返回的模型标识、维度、资料集隔离，返回余弦距离最小
+的五个片段来源。使用精确扫描；未建近似向量索引。模型标签指向的权重被替换时，
+应重建文档索引。请求取消会关闭操作专用数据库连接，尚未提交的事务由数据库回滚。
+取消或断线若发生在提交交接时，结果可能已经提交，可重复导入收敛状态。
+数据库连接和语句默认超时为 10 秒。
+
+默认测试离线。连接独立测试数据库运行真实 pgvector 集成测试：
+
+```bash
+AGENT_TEST_DATABASE_URL="$AGENT_DATABASE_URL" pnpm exec vitest run packages/adapters/src/postgres/vector-store.integration.test.ts
+```
+
+集成测试自动创建专属资料集并清理其记录。本地数据库可用
+`docker compose -f infra/compose.yaml stop` 停止，命名卷会保留。
