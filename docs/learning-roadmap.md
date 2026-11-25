@@ -202,4 +202,6 @@ GitHub 总表：[Issue #47](https://github.com/BernardZhang/ts-code-agent/issues
 该记录反映学习者授权提前进入 RAG 的实际进度。阶段 B/C 及原 #24 前置验收
 需各自核对，#17 检索式记忆与 #18 固定样本评测仍为后续任务。
 实际工时尚未完整汇总，原预算及目标日期仍保留历史基线。
-GitHub Issue 顶部进展与 P0 勾选将关联本轮 PR，状态保持待审阅。
+GitHub #13–#16 的顶部进展、P0/验收勾选及路线总表 #47 已关联
+[PR #53](https://github.com/BernardZhang/ts-code-agent/pull/53)，状态为待审阅。
+GitHub Projects 看板字段因当前 token 缺少项目访问权限而尚未同步。
