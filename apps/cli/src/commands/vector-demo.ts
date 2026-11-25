@@ -1,4 +1,4 @@
-import { indexDocument } from '@ts-code-agent/core';
+import { indexDocument, ModelError, ModelErrorCode } from '@ts-code-agent/core';
 import { ingestWorkspaceDocument } from '../bootstrap.js';
 import {
   OllamaEmbeddingProvider,
@@ -8,16 +8,26 @@ import { type IngestDocumentOptions } from '@ts-code-agent/code-agent';
 import { z } from 'zod';
 import type { EmbeddingConfig } from '../embedding-config.js';
 
-const connectionSchema = z.url().refine((value) => {
-  const protocol = new URL(value).protocol;
-  return protocol === 'postgres:' || protocol === 'postgresql:';
-});
+const connectionSchema = z.url().pipe(
+  z.string().refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === 'postgres:' || protocol === 'postgresql:';
+  }),
+);
 
 export function createVectorStore(
   config: EmbeddingConfig,
 ): PostgresVectorStore {
+  const connection = connectionSchema.safeParse(process.env.AGENT_DATABASE_URL);
+  if (!connection.success) {
+    // 不输出连接串，避免将其中的数据库密码写入终端日志。
+    throw new ModelError(
+      ModelErrorCode.VALIDATION,
+      '请设置 AGENT_DATABASE_URL 为有效的 PostgreSQL 连接串，例如 postgresql://用户:密码@127.0.0.1:15432/agent_rag。',
+    );
+  }
   return new PostgresVectorStore({
-    connectionString: connectionSchema.parse(process.env.AGENT_DATABASE_URL),
+    connectionString: connection.data,
     dimensions: config.dimensions,
   });
 }

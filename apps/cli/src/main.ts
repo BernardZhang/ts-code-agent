@@ -1,3 +1,9 @@
+import { ragQuery } from './commands/rag-query.js';
+import { loadEnv } from './load-env.js';
+import {
+  hybridSearchDemo,
+  type HybridSearchDemoOptions,
+} from './commands/hybrid-search.js';
 import { readTrace, ETraceReadItemType } from '@ts-code-agent/adapters';
 import { ModelErrorCode } from '@ts-code-agent/core';
 import { Command, CommanderError } from 'commander';
@@ -258,7 +264,68 @@ configureVectorCommand(
   },
 );
 
+configureVectorCommand(
+  program
+    .command('hybrid-search')
+    .description('关键词与向量召回，使用等权 RRF 融合')
+    .argument('<query>', '语义查询文本')
+    .requiredOption('--corpus-id <id>', '资料集标识')
+    .option('--keywords <terms...>', '显式字面关键词，默认按查询空白拆分')
+    .option('--source-path <path>', '精确来源路径过滤')
+    .option('--document-id <id>', '精确文档 ID 过滤'),
+).action(
+  async (
+    query: string,
+    options: EmbeddingConfigOptions & HybridSearchDemoOptions,
+  ) => {
+    await hybridSearchDemo(
+      query,
+      options,
+      readEmbeddingConfig(options),
+      controller.signal,
+    );
+  },
+);
+
+configure(
+  program
+    .command('rag-query')
+    .description('检索资料，构建预算内证据并生成带引用的回答')
+    .argument('<question>', '问题')
+    .requiredOption('--corpus-id <id>', '资料集标识')
+    .option('--keywords <terms...>', '显式关键词')
+    .option('--source-path <path>', '精确来源路径过滤')
+    .option('--document-id <id>', '精确文档 ID 过滤')
+    .option('--embedding-model <name>', 'Embedding 模型，独立于回答模型')
+    .option('--embedding-dimensions <number>', '预期向量维度'),
+).action(
+  async (
+    question: string,
+    options: ConfigOptions &
+      HybridSearchDemoOptions & {
+        embeddingModel?: string;
+        embeddingDimensions?: string;
+      },
+  ) => {
+    await ragQuery(
+      question,
+      options,
+      readConfig(options),
+      readEmbeddingConfig({
+        ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
+        ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.embeddingModel ? { model: options.embeddingModel } : {}),
+        ...(options.embeddingDimensions
+          ? { dimensions: options.embeddingDimensions }
+          : {}),
+      }),
+      controller.signal,
+    );
+  },
+);
+
 try {
+  loadEnv();
   await program.parseAsync();
   if (controller.signal.aborted) {
     process.exitCode = 130;

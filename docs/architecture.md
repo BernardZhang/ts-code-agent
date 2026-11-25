@@ -340,3 +340,68 @@ vector 类型，CHECK 约束每行维度。入库前验证非零向量、有限 
 
 完整导入链路的真实模型验证、分批失败边界与验收命令见
 [文档切片、向量化与入库验收](learning/rag-ingestion.md)。
+
+### Issue #15 混合检索
+
+Core/retrieval/hybrid-search 定义关键词召回契约、混合查询编排与纯函数 RRF。
+混合存储接口以 Pick<VectorStore, 'search'> 复用向量查询，新增 searchKeywords，
+既有 VectorStore 实现无需新增必选方法。RetrievalFilter 提供来源路径和文档 ID
+精确过滤；两路均在相同资料集、实际模型、维度及过滤范围内取候选。
+
+PostgresVectorStore 使用参数化 strpos 对片段正文做字面子串匹配，
+按命中的不同关键词数排序。向量距离或关键词命中数相同时，按文档与片段 ID
+稳定排列。当前为小语料扫描基线，没有新增表结构或全文索引。
+
+混合查询先生成一个问题向量，再使用共享 AbortSignal 并发召回，两路各取 50 条。
+Core 按文档与片段身份去重，同一路重复结果只计首次排名，
+等权累加 1/(60+rank)，最后按分数降序、稳定 ID 升序取前 5 条。
+发现同一文档内容版本冲突时明确失败，防止并发入库造成旧新正文混合。
+任一路失败均取消共享请求。CLI hybrid-search 展示两路排名及 RRF 分数。
+
+### CLI 本地环境配置
+
+CLI 在执行命令前通过 Node 原生 process.loadEnvFile 加载当前工作目录的 .env。
+已有环境变量优先于文件值，命令参数继续由配置模块优先处理。
+文件缺失时继续运行，其他读取失败返回不含文件内容的配置错误。
+.env 已由 .gitignore 排除；.env.example 作为可提交的配置参考。
+
+### Issue #16 证据上下文构建
+
+Core/retrieval/evidence-context 提供 buildEvidenceContext，接收已经排好序的候选、
+证据预算和注入的文本 token 估算器。调用方负责先扣除系统提示、问题、工具定义
+及输出预留。构建器按顺序尝试完整片段，超预算则跳过，重复片段和空白正文不装入。
+每次估算完整序列化结果，包含引用标签、来源和分隔符成本。
+选中的证据分配连续 S1/S2 编号，结果包含正文、估算用量及带版本与坐标的引用映射。
+此模块完成预算内证据选择；重排、模型回答和生成引用校验继续由 #16 后续接入。
+
+Core/retrieval/answer-citations 提供 validateAnswerCitations，接收模型回答与
+本轮 EvidenceContext.citations。按首次出现顺序解析 [S数字] 并映射来源，
+重复引用仅展示一次。未知编号、缺少引用、空回答及没有本轮证据分别报告具名问题码；
+输入来源编号重复或不合法时抛出契约错误。valid 仅表示编号与来源映射有效，
+正文是否受证据支持仍需独立判断。无证据场景应在调用模型前停止生成。
+
+### RAG 问答编排
+
+Core 的 generateGroundedAnswer 接收问题、已排序候选、预算、消息估算器及
+ModelProvider。首先预留 1024 输出 token（由 CLI 指定），计算系统提示和问题
+基础成本，再对完整序列化消息估算证据增量。没有预算内证据时返回明确拒答，
+模型未被调用。模型通过结构化 answer/evidenceSufficient 返回结果；
+证据不足时拒答，引用校验失败时不返回原始生成正文。
+结果用 ERagAnswerStatus 表达 answered、insufficient_evidence 和 invalid_citations。
+
+CLI rag-query 装配混合检索、词项覆盖重排、证据上下文与回答引用校验，分开配置
+回答模型与 Embedding 模型。RRF 前 20 个候选经过重排取前 5 个，再按预算选取证据。
+检索资料以数据形式交给模型；提示与合法引用校验不构成正文事实支持证明。
+模型输出 token 预留当前仅用于预算，未下发为生成硬上限。
+
+### 可解释重排基线
+
+Core/retrieval/rerank 使用 Node 原生 Intl.Segmenter 对问题分词，去除常见问法词，
+合并显式关键词并去重。重排按正文词项覆盖率降序、标题匹配词数降序、
+原 RRF 排名升序处理。零匹配候选继续保留以承接向量召回的同义表达。
+结果保留 originalRank、rank、coverage、matchedTerms 和 headingMatches，
+CLI 以路径、行号和标题展示比较信息。词项覆盖率不作为无证据拒答阈值，
+该规则的检索质量仍需固定样本评测。
+
+真实模型的有证据回答、首轮漏引拦截、提示调整及资料不足拒答记录见
+[RAG 问答验收](learning/rag-answer.md)。

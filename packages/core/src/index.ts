@@ -24,3 +24,8 @@ export * from './retrieval/parse-document.js';
 export * from './retrieval/chunk-document.js';
 export * from './retrieval/index-document.js';
 export * from './retrieval/ingest-document.js';
+export * from './retrieval/hybrid-search.js';
+export * from './retrieval/evidence-context.js';
+export * from './retrieval/answer-citations.js';
+export * from './retrieval/grounded-answer.js';
+export * from './retrieval/rerank.js';

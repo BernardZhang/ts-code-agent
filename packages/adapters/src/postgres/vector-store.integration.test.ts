@@ -1,3 +1,4 @@
+import { hybridSearch } from '@ts-code-agent/core';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
@@ -121,5 +122,71 @@ describe.skipIf(!connectionString)('pgvector 真实数据库', () => {
     expect(hits).toHaveLength(versions.has('v1') ? 2 : 1);
     await store.replaceDocument({ ...record, chunks: [] });
     await expect(search()).resolves.toEqual([]);
+  });
+
+  it('字面关键词召回支持中文、代码标识符和特殊字符，并与向量共用过滤', async () => {
+    await store.replaceDocument({
+      ...record,
+      chunks: [
+        { ...record.chunks[0]!, text: 'AbortSignal 取消 %_' },
+        { ...record.chunks[1]!, text: '任务中止后清理资源' },
+      ],
+    });
+    await store.replaceDocument({
+      ...record,
+      documentId: 'other-doc',
+      sourcePath: 'other.md',
+      chunks: [{ ...record.chunks[0]!, text: 'AbortSignal 取消 %_' }],
+    });
+    const filter = { sourcePath: 'guide.md', documentId: 'doc' };
+    const hits = await store.searchKeywords({
+      corpusId,
+      model: record.model,
+      terms: ['AbortSignal', '取消', '%_'],
+      limit: 5,
+      filter,
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ documentId: 'doc', matchedTerms: 3 });
+    const results = await hybridSearch(
+      {
+        query: '如何中止任务',
+        corpusId,
+        model: record.model,
+        terms: ['AbortSignal'],
+        filter,
+      },
+      {
+        embed: async () => ({ model: record.model, embeddings: [[1, 0]] }),
+      },
+      store,
+    );
+    expect(results).toHaveLength(2);
+    expect(results.every(({ documentId }) => documentId === 'doc')).toBe(true);
+    expect(results[0]).toMatchObject({ vectorRank: 1, keywordRank: 1 });
+    await expect(
+      store.searchKeywords({
+        corpusId,
+        model: record.model,
+        terms: ['不存在的词'],
+        limit: 5,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      store.searchKeywords({
+        corpusId,
+        model: 'other-model',
+        terms: ['AbortSignal'],
+        limit: 5,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      store.searchKeywords({
+        corpusId: corpusId + '-other',
+        model: record.model,
+        terms: ['AbortSignal'],
+        limit: 5,
+      }),
+    ).resolves.toEqual([]);
   });
 });

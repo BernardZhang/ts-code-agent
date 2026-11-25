@@ -1,3 +1,8 @@
+export interface RetrievalFilter {
+  readonly sourcePath?: string;
+  readonly documentId?: string;
+}
+
 export interface VectorChunk {
   readonly chunkId: string;
   readonly ordinal: number;
@@ -22,6 +27,7 @@ export interface IndexedDocument {
 }
 
 export interface VectorSearchRequest {
+  readonly filter?: RetrievalFilter;
   readonly corpusId: string;
   readonly model: string;
   readonly embedding: readonly number[];

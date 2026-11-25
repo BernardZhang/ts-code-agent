@@ -2,6 +2,10 @@ import { Client } from 'pg';
 import { z } from 'zod';
 import type {
   IndexedDocument,
+  KeywordSearchRequest,
+  KeywordSearchHit,
+  RetrievalFilter,
+  HybridSearchStore,
   VectorSearchHit,
   VectorSearchRequest,
   VectorStore,
@@ -29,6 +33,10 @@ const hitSchema = z.object({
   distance: z.number(),
 });
 
+const keywordHitSchema = hitSchema.omit({ distance: true }).extend({
+  matched_terms: z.number().int().positive(),
+});
+
 export interface PostgresVectorStoreOptions {
   connectionString: string;
   dimensions: number;
@@ -36,7 +44,7 @@ export interface PostgresVectorStoreOptions {
 }
 
 /** 小型学习语料采用精确余弦查询，每次操作使用独立且有超时的连接。 */
-export class PostgresVectorStore implements VectorStore {
+export class PostgresVectorStore implements VectorStore, HybridSearchStore {
   private readonly timeoutMs: number;
 
   constructor(private readonly options: PostgresVectorStoreOptions) {
@@ -189,20 +197,23 @@ export class PostgresVectorStore implements VectorStore {
       throw new RangeError('查询资料集、模型及 limit（1 到 100）不合法。');
     }
     return this.withClient(request.signal, async (client) => {
+      const parameters: unknown[] = [
+        JSON.stringify(request.embedding),
+        request.corpusId,
+        request.model,
+        this.options.dimensions,
+        request.limit,
+      ];
+      const filter = this.searchFilter(request.filter, parameters);
       const result = await client.query(
         `SELECT d.document_id, d.source_path,
         d.content_hash, c.metadata, c.embedding <=> $1::vector AS distance
         FROM agent_rag_chunks c JOIN agent_rag_documents d
           ON c.corpus_id=d.corpus_id AND c.document_id=d.document_id
         WHERE d.corpus_id=$2 AND d.model=$3 AND d.dimensions=$4
-        ORDER BY distance, d.document_id, c.ordinal LIMIT $5`,
-        [
-          JSON.stringify(request.embedding),
-          request.corpusId,
-          request.model,
-          this.options.dimensions,
-          request.limit,
-        ],
+        ${filter}
+        ORDER BY distance, d.document_id, c.chunk_id LIMIT $5`,
+        parameters,
       );
       request.signal?.throwIfAborted();
       return result.rows.map((row: unknown) => {
@@ -216,6 +227,83 @@ export class PostgresVectorStore implements VectorStore {
         };
       });
     });
+  }
+
+  /** 大小写敏感的字面子串匹配，按命中的不同词项数降序排列。 */
+  async searchKeywords(
+    request: KeywordSearchRequest,
+  ): Promise<readonly KeywordSearchHit[]> {
+    request.signal?.throwIfAborted();
+    const terms = [...new Set(request.terms.map((term) => term.trim()))];
+    if (
+      !request.corpusId.trim() ||
+      !request.model.trim() ||
+      !Number.isSafeInteger(request.limit) ||
+      request.limit < 1 ||
+      request.limit > 100 ||
+      !terms.length ||
+      terms.some((term) => !term || term.includes('\0'))
+    ) {
+      throw new TypeError('关键词、资料集、模型或检索数量不合法。');
+    }
+    return this.withClient(request.signal, async (client) => {
+      const parameters: unknown[] = [
+        terms,
+        request.corpusId,
+        request.model,
+        this.options.dimensions,
+        request.limit,
+      ];
+      const filter = this.searchFilter(request.filter, parameters);
+      // strpos 使用参数的原始字面量，% 和 _ 不具有 LIKE 通配符含义。
+      const result = await client.query(
+        `SELECT d.document_id, d.source_path,
+        d.content_hash, c.metadata, matches.matched_terms
+        FROM agent_rag_chunks c JOIN agent_rag_documents d
+          ON c.corpus_id=d.corpus_id AND c.document_id=d.document_id
+        CROSS JOIN LATERAL (
+          SELECT count(*)::integer AS matched_terms FROM unnest($1::text[]) AS terms(term)
+          WHERE strpos(c.metadata->>'text', term) > 0
+        ) matches
+        WHERE d.corpus_id=$2 AND d.model=$3 AND d.dimensions=$4
+          AND matches.matched_terms > 0 ${filter}
+        ORDER BY matches.matched_terms DESC, d.document_id, c.chunk_id LIMIT $5`,
+        parameters,
+      );
+      request.signal?.throwIfAborted();
+      return result.rows.map((row: unknown) => {
+        const hit = keywordHitSchema.parse(row);
+        return {
+          documentId: hit.document_id,
+          sourcePath: hit.source_path,
+          contentHash: hit.content_hash,
+          chunk: hit.metadata,
+          matchedTerms: hit.matched_terms,
+        };
+      });
+    });
+  }
+
+  private searchFilter(
+    filter: RetrievalFilter | undefined,
+    parameters: unknown[],
+  ): string {
+    const clauses: string[] = [];
+    if (filter?.sourcePath !== undefined) {
+      if (!filter.sourcePath.trim()) {
+        throw new TypeError('来源路径过滤不能为空。');
+      }
+      parameters.push(filter.sourcePath);
+      clauses.push(`AND d.source_path=$${parameters.length}`);
+    }
+    if (filter?.documentId !== undefined) {
+      if (!filter.documentId.trim()) {
+        throw new TypeError('文档 ID 过滤不能为空。');
+      }
+      parameters.push(filter.documentId);
+      clauses.push(`AND d.document_id=$${parameters.length}`);
+    }
+    return clauses.join(' ');
   }
 
   private validateVector(vector: readonly number[]): void {

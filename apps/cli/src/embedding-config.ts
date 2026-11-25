@@ -18,15 +18,16 @@ export interface EmbeddingConfigOptions {
   timeoutMs?: string;
 }
 
-/** 模型和维度必须显式配置，避免默认值与本地模型输出不一致。 */
+/** 统一读取 Embedding 配置，命令参数覆盖环境变量及模型默认值。 */
 export function readEmbeddingConfig(
   options: EmbeddingConfigOptions,
   env = process.env,
 ): EmbeddingConfig {
   return embeddingConfigSchema.parse({
     baseUrl: options.baseUrl ?? env.AGENT_BASE_URL ?? 'http://127.0.0.1:11434',
-    model: options.model ?? env.AGENT_EMBEDDING_MODEL,
-    dimensions: options.dimensions ?? env.AGENT_EMBEDDING_DIMENSIONS,
+    model:
+      options.model ?? env.AGENT_EMBEDDING_MODEL ?? 'embeddinggemma:latest',
+    dimensions: options.dimensions ?? env.AGENT_EMBEDDING_DIMENSIONS ?? 768,
     timeoutMs: options.timeoutMs ?? env.AGENT_TIMEOUT_MS ?? 120_000,
   });
 }

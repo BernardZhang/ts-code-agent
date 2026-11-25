@@ -3,15 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { readConfig } from './config.js';
 import { parsePlan } from './commands/structured-demo.js';
 
+const configEnvironment = {
+  AGENT_BASE_URL: 'http://127.0.0.1:11434',
+  AGENT_MODEL: 'env',
+  AGENT_CONTEXT_LENGTH: '16384',
+  AGENT_TIMEOUT_MS: '120000',
+  AGENT_THINK: 'true',
+};
+
 describe('configuration and structured output', () => {
-  it('uses CLI over environment over defaults', () => {
+  it('uses CLI over explicitly configured environment', () => {
     const config = readConfig(
       { model: 'cli', think: 'false' },
-      {
-        AGENT_MODEL: 'env',
-        AGENT_CONTEXT_LENGTH: '16384',
-        AGENT_THINK: 'true',
-      },
+      configEnvironment,
     );
     expect(config).toMatchObject({
       model: 'cli',
@@ -27,7 +31,7 @@ describe('configuration and structured output', () => {
       { contextLength: 'oops' },
       { baseUrl: 'file:///tmp' },
     ]) {
-      expect(() => readConfig(options, {})).toThrow();
+      expect(() => readConfig(options, configEnvironment)).toThrow();
     }
   });
   it('distinguishes JSON errors from schema errors', () => {

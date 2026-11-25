@@ -41,9 +41,9 @@ pnpm build
 pnpm start chat "你好"
 ```
 
-配置优先级为命令参数 > 环境变量 > 默认值：
+聊天、会话及回答模型配置由命令参数或环境提供，表中为 .env.example 示例值：
 
-| 参数               | 环境变量               | 默认值                   |
+| 参数               | 环境变量               | 配置示例                 |
 | ------------------ | ---------------------- | ------------------------ |
 | `--base-url`       | `AGENT_BASE_URL`       | `http://127.0.0.1:11434` |
 | `--model`          | `AGENT_MODEL`          | `qwen3:8b`               |
@@ -57,11 +57,20 @@ pnpm start chat "你好"
 pnpm dev chat "你好" --model qwen3:8b --timeout-ms 60000 --think false
 ```
 
-`.env.example` 是配置参考；程序不自动加载 `.env`。可以在终端导出变量，或构建后使用 Node 的原生加载方式：
+`pnpm dev`、`pnpm start` 和构建后的 CLI 会自动加载当前工作目录中的 `.env`。
+先将 `.env.example` 复制为 `.env`，再填写本地实际配置。
+配置优先级为命令参数 > 已有环境变量 > `.env`。聊天模型配置项均需提供；
+Embedding 配置另有 embeddinggemma:latest、768 维等回退值。
+缺少 `.env` 时继续运行，读取失败时明确报错。`.env` 已被 Git 忽略。
 
 ```bash
-node --env-file=.env apps/cli/dist/main.js chat "你好"
+cp .env.example .env
+pnpm dev chat "你好"
 ```
+
+数据库连接请在 `.env` 中填写 `AGENT_DATABASE_URL`，
+并与 PostgreSQL 初始化时的账号、密码、端口和数据库名保持一致。
+Docker Compose 启动时通过 `--env-file .env` 显式读取仓库根目录配置。
 
 Ctrl+C 中断请求，退出码为 `130`；普通成功为 `0`；配置、服务、协议与输出校验失败为 `1`。错误写入 stderr；流式失败时 stdout 可能已经包含部分文本，应结合退出码判断结果。
 
@@ -212,7 +221,7 @@ Git 工具当前要求工作区为仓库根目录，非仓库及仓库子目录�
 `AGENT_BASE_URL`、`AGENT_TIMEOUT_MS`。
 
 ```bash
-pnpm dev embed-demo docs/spec.md --corpus-id project-docs --model <已安装的Embedding模型> --dimensions <模型实际输出维度>
+pnpm dev embed-demo docs/spec.md --corpus-id project-docs --model embeddinggemma --dimensions 768
 ```
 
 命令按每批最多 16 个片段调用 Ollama，校验每个返回向量的维度，
@@ -231,7 +240,7 @@ export AGENT_DATABASE_URL=postgresql://postgres:rag-local-dev@127.0.0.1:15432/ag
 export AGENT_EMBEDDING_MODEL=embeddinggemma
 export AGENT_EMBEDDING_DIMENSIONS=768
 
-docker compose -f infra/compose.yaml up -d --wait
+docker compose --env-file .env -f infra/compose.yaml up -d --wait
 ollama pull embeddinggemma
 
 pnpm dev vector-init
@@ -257,4 +266,60 @@ AGENT_TEST_DATABASE_URL="$AGENT_DATABASE_URL" pnpm exec vitest run packages/adap
 ```
 
 集成测试自动创建专属资料集并清理其记录。本地数据库可用
-`docker compose -f infra/compose.yaml stop` 停止，命名卷会保留。
+`docker compose --env-file .env -f infra/compose.yaml stop` 停止，命名卷会保留。
+
+### 混合检索
+
+完成文档入库后，使用相同的数据库连接和 Embedding 配置运行：
+
+```bash
+pnpm dev hybrid-search "如何取消模型请求" \
+  --corpus-id project-docs \
+  --keywords AbortSignal 取消 \
+  --source-path docs/spec.md
+```
+
+两路各取最多 50 个候选，以等权 RRF（平滑常数 60）融合，返回前 5 个。
+同分按 documentId、chunkId 的字典序排列。输出包含各路排名和融合分数，
+便于检查候选为什么排在前面。--source-path 和 --document-id 为精确匹配，
+在两路召回取候选之前应用。
+
+关键词使用大小写敏感的字面子串匹配，按命中的不同词项数降序排列，
+同分按稳定 ID 排列。% 和 \_ 均按普通文字处理。
+未提供 --keywords 时，按问题中的空白拆分词项；中文自然语言问题可显式提供关键词。
+当前关键词查询扫描片段正文，未加入分词器、BM25 或全文索引。
+任一路查询失败时整体失败，跨路检测到同一文档的多个内容版本时提示重试。
+
+### 带引用的 RAG 问答
+
+在已完成入库且 .env 配置模型和数据库连接的情况下运行：
+
+```bash
+pnpm dev rag-query "项目如何处理取消请求？" \
+  --corpus-id project-docs \
+  --keywords AbortSignal 取消 \
+  --source-path docs/spec.md
+```
+
+回答模型使用 AGENT_MODEL 或 --model，Embedding 模型使用
+AGENT_EMBEDDING_MODEL 或 --embedding-model；向量维度由
+AGENT_EMBEDDING_DIMENSIONS 或 --embedding-dimensions 指定。
+
+RAG 问答先对 RRF 前 20 个候选重排，选取前 5 个再构建证据。
+重排按正文词项覆盖率、标题匹配数、原 RRF 排名依次排序；中文使用 Node 原生分词。
+系统提示与问题先占用预算，另预留 1024 输出 token，
+其余空间装入完整证据并分配 S1/S2。没有可用证据时跳过回答模型，
+返回 insufficient_evidence。模型也可报告证据不足。
+回答只有在引用编号校验通过时才作为 answered 返回，输出包含引用来源和估算输入量。
+未知或缺失引用返回 invalid_citations，进程退出码为 1，原始生成正文不输出。
+引用编号有效性与事实支持程度分别评估。输出的 reranking 列出路径、行号、标题、
+重排前后名次、覆盖率和匹配词，可直接比较。此基线使用词项覆盖，未使用语义重排模型。
+使用现有启发式 token 估算，输出预留参与预算计算，当前未作为模型生成硬上限。
+
+### RAG 交付记录
+
+本轮覆盖 #13 文档导入、#14 向量入库、#15 混合检索和 #16 带引用问答。
+模块分层、验证证据和待评测项见
+[文档与入库验收](docs/learning/rag-ingestion.md)、
+[混合检索验收](docs/learning/hybrid-search.md)和
+[问答验收](docs/learning/rag-answer.md)。

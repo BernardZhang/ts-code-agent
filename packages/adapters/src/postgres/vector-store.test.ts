@@ -127,3 +127,31 @@ it('提前取消时不建立连接', async () => {
   ).rejects.toThrow();
   expect(connect).not.toHaveBeenCalled();
 });
+
+it('两路查询使用相同的参数化路径和文档 ID 过滤', async () => {
+  query.mockResolvedValue({ rows: [] });
+  const filter = { sourcePath: "docs/%_'.md", documentId: 'doc' };
+  await store().search({
+    corpusId: 'manual',
+    model: 'test:v1',
+    embedding: [1, 0],
+    limit: 5,
+    filter,
+  });
+  await store().searchKeywords({
+    corpusId: 'manual',
+    model: 'test:v1',
+    terms: ['AbortSignal', '%_'],
+    limit: 5,
+    filter,
+  });
+  for (const [sql, parameters] of query.mock.calls) {
+    expect(sql).toContain('AND d.source_path=$6');
+    expect(sql).toContain('AND d.document_id=$7');
+    expect(parameters.slice(-2)).toEqual([
+      filter.sourcePath,
+      filter.documentId,
+    ]);
+    expect(sql).not.toContain(filter.sourcePath);
+  }
+});
