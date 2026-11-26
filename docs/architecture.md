@@ -308,6 +308,10 @@ Writer已等待所有在途写入，Sink开始关闭后禁止再写。Store在Si
 
 ### RAG Embedding CLI 接入
 
+文档分片在 Core 中跳过纯空白片段（包括 Markdown 围栏内的长空白段），
+避免单个无效片段使整批向量化失败。有效片段保留原始文本与 UTF-16 来源坐标，
+ordinal 按实际输出连续编号；Embedding Provider 继续拒绝纯空白输入。
+
 Core 定义独立 EmbeddingProvider 契约，Adapters 的 OllamaEmbeddingProvider
 使用 /api/embed 批量请求，并校验向量数量、维度及有限数值。
 CLI 的 embedding-config 集中读取模型与预期维度，embed-demo 装配导入和

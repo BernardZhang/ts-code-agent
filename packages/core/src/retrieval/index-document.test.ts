@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { indexDocument } from './index-document.js';
-import type { VectorStore } from '@ts-code-agent/core';
+import type { EmbeddingProvider, VectorStore } from '@ts-code-agent/core';
 
 import { chunkDocument } from './chunk-document.js';
 import { parseDocument } from './parse-document.js';
@@ -33,6 +33,42 @@ const config = (maxCodePoints = 800) => {
 const store = (): VectorStore => ({
   replaceDocument: vi.fn(),
   search: vi.fn(),
+});
+
+it('围栏中的大片空白不阻断有效片段向量化与入库', async () => {
+  content = '```\n' + '\n'.repeat(2000) + '有效正文\n```';
+  const options = config();
+  const document = { ...options.document, format: EDocumentFormat.MARKDOWN };
+  const provider: EmbeddingProvider = {
+    async embed({ texts }) {
+      // 与真实 Provider 的输入约束一致，空白片段会拒绝整个批次。
+      if (texts.some((text) => !text.trim())) {
+        throw new TypeError('空白片段不能向量化');
+      }
+      return { model: 'test:v1', embeddings: texts.map(() => [1, 0]) };
+    },
+  };
+  const storage = store();
+  const result = await indexDocument(
+    {
+      ...options,
+      document,
+      chunks: chunkDocument(
+        document,
+        parseDocument(content, document.format),
+        800,
+      ),
+    },
+    provider,
+    storage,
+  );
+  expect(result.chunks).toHaveLength(2);
+  expect(result.chunks.map(({ ordinal }) => ordinal)).toEqual([0, 1]);
+  expect(result.chunks[1]?.text).toContain('有效正文\n```');
+  expect(storage.replaceDocument).toHaveBeenCalledExactlyOnceWith(
+    result,
+    undefined,
+  );
 });
 
 it('完成向量化后交付正文、向量与来源到存储', async () => {

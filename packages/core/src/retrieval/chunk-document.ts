@@ -75,7 +75,7 @@ export function chunkDocument(
         }
       }
 
-      // 区段已完整放下时直接收尾，超限才回退到自然边界；始终保留空白。
+      // 区段已完整放下时直接收尾，超限才回退到自然边界。
       if (end < endOffset) {
         end =
           newlineBoundary > start
@@ -83,6 +83,13 @@ export function chunkDocument(
             : whitespaceBoundary > start
               ? whitespaceBoundary
               : end;
+      }
+      const chunkText = text.slice(start, end);
+      // 纯空白不能向量化；仍前进原文游标，避免死循环并保留后续来源坐标。
+      // 有效片段保留原始空白，ordinal 仅按实际输出数量连续编号。
+      if (!chunkText.trim()) {
+        start = end;
+        continue;
       }
       const startLine = lineAt(start);
       const endLine = lineAt(end - 1);
@@ -92,7 +99,7 @@ export function chunkDocument(
         headingPath: [...section.headingPath],
         documentId: document.documentId,
         ordinal: chunks.length,
-        text: text.slice(start, end),
+        text: chunkText,
         startLine,
         endLine,
         chunkId: createHash('sha256')
