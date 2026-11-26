@@ -160,7 +160,7 @@ sequenceDiagram
 | A    | 在既有 Core/tools、agent、context 与 Code Agent 只读工具上，增加 CLI 会话、流式运行事件、追踪与预算、通用计划执行集成 |
 | B    | Core/workflow、Checkpoint 接口；Adapters/mcp、storage；examples/mcp-server                                            |
 | C    | Code Agent/permissions、repository、editing、verification、planning；隔离后命令执行                                   |
-| D    | Code Agent/retrieval；Adapters Embedding 与 PostgreSQL；infra/migrations                                              |
+| D    | Core/retrieval；Code Agent 工作区导入；Adapters 文档读取、Embedding 与 PostgreSQL                                     |
 | E    | evals/cases、runner、scorers；故障注入及全量回归                                                                      |
 | F    | experiments/langgraph、multi-agent；模块整理、演示与交付                                                              |
 
@@ -305,3 +305,107 @@ Adapters 已实现 FileTraceSink：异步 open 使用 wx 排他创建及0600权�
 ### Trace关闭失败隔离修正（2026-11-15）
 
 Writer已等待所有在途写入，Sink开始关闭后禁止再写。Store在Sink关闭成功或拒绝后均结算文件实际占用，成功结算才解除活动保护；关闭pending/超时不执行结算。单个CLOSE_FAILED不再阻挡后续run或Store最终释放锁，Writer仍报告资源关闭失败。stat失败保留预留和目录保护。初始化失败路径也结算已创建文件，并保留初始化与关闭异常。此策略隔离目录可用性，不保证失败句柄已释放，也不自动重试关闭。
+
+### RAG Embedding CLI 接入
+
+文档分片在 Core 中跳过纯空白片段（包括 Markdown 围栏内的长空白段），
+避免单个无效片段使整批向量化失败。有效片段保留原始文本与 UTF-16 来源坐标，
+ordinal 按实际输出连续编号；Embedding Provider 继续拒绝纯空白输入。
+
+Core 定义独立 EmbeddingProvider 契约，Adapters 的 OllamaEmbeddingProvider
+使用 /api/embed 批量请求，并校验向量数量、维度及有限数值。
+CLI 的 embedding-config 集中读取模型与预期维度，embed-demo 装配导入和
+Provider，按 16 个片段顺序请求，共用任务 AbortSignal。
+全部请求成功后才输出摘要；此演示阶段在内存中消费向量。
+持久化命令 index-demo 和 vector-search 使用下述 pgvector 存储接入。
+
+### pgvector 存储接入
+
+Core/retrieval 定义通用文档类型、解析、分片、索引编排和 VectorStore 契约。
+Code Agent 的 ingestWorkspaceDocument 校验工作区路径，调用注入的
+TextFileReader 读取正文，再交给 Core 的 ingestDocument 规范化、生成文档身份、解析和分片。
+Adapters 的 readTextFile 负责本地普通文件的有界读取、严格 UTF-8 解码。
+CLI bootstrap 将 readTextFile 注入 ingestWorkspaceDocument，命令取得 ParsedDocument 后，
+交给 Core 的 indexDocument 调用注入的 EmbeddingProvider 与 VectorStore。
+CLI 装配 OllamaEmbeddingProvider 与 PostgresVectorStore。跨包通过公开入口导入，Adapters 使用 Core 的存储记录
+契约接收正文、向量及来源信息。
+
+数据库由 vector-init 显式创建两张专用表，document 保存资料集、文档版本、
+路径、实际模型标识与维度，chunk 保存向量及来源元数据。向量使用 pgvector
+vector 类型，CHECK 约束每行维度。入库前验证非零向量、有限 float32 数值及
+维度。查询在模型、维度和资料集过滤后做精确余弦排序，当前未创建近似索引。
+
+向量化完成后才开启数据库事务。事务通过 advisory transaction lock 串行替换
+同一逻辑文档，删除旧片段与插入新片段原子提交，空文档同样执行删除。
+每次操作有专属连接，失败或取消关闭连接，未提交事务自动回滚。
+提交交接期间的取消和断线无法证明服务器是否已提交，允许重复导入收敛。
+当前重复导入重算向量，尚未实现版本缓存或模型权重摘要追踪。
+本地 PostgreSQL 17 + pgvector 的启动配置位于 infra/compose.yaml。
+
+完整导入链路的真实模型验证、分批失败边界与验收命令见
+[文档切片、向量化与入库验收](learning/rag-ingestion.md)。
+
+### Issue #15 混合检索
+
+Core/retrieval/hybrid-search 定义关键词召回契约、混合查询编排与纯函数 RRF。
+混合存储接口以 Pick<VectorStore, 'search'> 复用向量查询，新增 searchKeywords，
+既有 VectorStore 实现无需新增必选方法。RetrievalFilter 提供来源路径和文档 ID
+精确过滤；两路均在相同资料集、实际模型、维度及过滤范围内取候选。
+
+PostgresVectorStore 使用参数化 strpos 对片段正文做字面子串匹配，
+按命中的不同关键词数排序。向量距离或关键词命中数相同时，按文档与片段 ID
+稳定排列。当前为小语料扫描基线，没有新增表结构或全文索引。
+
+混合查询先生成一个问题向量，再使用共享 AbortSignal 并发召回，两路各取 50 条。
+Core 按文档与片段身份去重，同一路重复结果只计首次排名，
+等权累加 1/(60+rank)，最后按分数降序、稳定 ID 升序取前 5 条。
+发现同一文档内容版本冲突时明确失败，防止并发入库造成旧新正文混合。
+任一路失败均取消共享请求。CLI hybrid-search 展示两路排名及 RRF 分数。
+
+### CLI 本地环境配置
+
+CLI 在执行命令前通过 Node 原生 process.loadEnvFile 加载当前工作目录的 .env。
+已有环境变量优先于文件值，命令参数继续由配置模块优先处理。
+文件缺失时继续运行，其他读取失败返回不含文件内容的配置错误。
+.env 已由 .gitignore 排除；.env.example 作为可提交的配置参考。
+
+### Issue #16 证据上下文构建
+
+Core/retrieval/evidence-context 提供 buildEvidenceContext，接收已经排好序的候选、
+证据预算和注入的文本 token 估算器。调用方负责先扣除系统提示、问题、工具定义
+及输出预留。构建器按顺序尝试完整片段，超预算则跳过，重复片段和空白正文不装入。
+每次估算完整序列化结果，包含引用标签、来源和分隔符成本。
+选中的证据分配连续 S1/S2 编号，结果包含正文、估算用量及带版本与坐标的引用映射。
+此模块完成预算内证据选择；重排、模型回答和生成引用校验继续由 #16 后续接入。
+
+Core/retrieval/answer-citations 提供 validateAnswerCitations，接收模型回答与
+本轮 EvidenceContext.citations。按首次出现顺序解析 [S数字] 并映射来源，
+重复引用仅展示一次。未知编号、缺少引用、空回答及没有本轮证据分别报告具名问题码；
+输入来源编号重复或不合法时抛出契约错误。valid 仅表示编号与来源映射有效，
+正文是否受证据支持仍需独立判断。无证据场景应在调用模型前停止生成。
+
+### RAG 问答编排
+
+Core 的 generateGroundedAnswer 接收问题、已排序候选、预算、消息估算器及
+ModelProvider。首先预留 1024 输出 token（由 CLI 指定），计算系统提示和问题
+基础成本，再对完整序列化消息估算证据增量。没有预算内证据时返回明确拒答，
+模型未被调用。模型通过结构化 answer/evidenceSufficient 返回结果；
+证据不足时拒答，引用校验失败时不返回原始生成正文。
+结果用 ERagAnswerStatus 表达 answered、insufficient_evidence 和 invalid_citations。
+
+CLI rag-query 装配混合检索、词项覆盖重排、证据上下文与回答引用校验，分开配置
+回答模型与 Embedding 模型。RRF 前 20 个候选经过重排取前 5 个，再按预算选取证据。
+检索资料以数据形式交给模型；提示与合法引用校验不构成正文事实支持证明。
+模型输出 token 预留当前仅用于预算，未下发为生成硬上限。
+
+### 可解释重排基线
+
+Core/retrieval/rerank 使用 Node 原生 Intl.Segmenter 对问题分词，去除常见问法词，
+合并显式关键词并去重。重排按正文词项覆盖率降序、标题匹配词数降序、
+原 RRF 排名升序处理。零匹配候选继续保留以承接向量召回的同义表达。
+结果保留 originalRank、rank、coverage、matchedTerms 和 headingMatches，
+CLI 以路径、行号和标题展示比较信息。词项覆盖率不作为无证据拒答阈值，
+该规则的检索质量仍需固定样本评测。
+
+真实模型的有证据回答、首轮漏引拦截、提示调整及资料不足拒答记录见
+[RAG 问答验收](learning/rag-answer.md)。

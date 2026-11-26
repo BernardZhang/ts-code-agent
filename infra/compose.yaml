@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd
+    environment:
+      POSTGRES_DB: agent_rag
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${AGENT_POSTGRES_PASSWORD:?请设置本地数据库密码}
+    ports:
+      - '127.0.0.1:${AGENT_POSTGRES_PORT:-15432}:5432'
+    volumes:
+      - rag-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d agent_rag']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+volumes:
+  rag-data:

@@ -40,3 +40,9 @@ export {
   GitStatusError,
   EGitStatusErrorCode,
 } from './tools/git-status-process.js';
+export {
+  ingestWorkspaceDocument,
+  ingestWorkspaceDocument as ingestDocument,
+} from './retrieval/ingest-workspace-document.js';
+export type { IngestDocumentOptions } from './retrieval/types.js';
+export { EIngestErrorCode } from './retrieval/types.js';

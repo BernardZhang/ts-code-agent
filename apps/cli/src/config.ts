@@ -31,10 +31,10 @@ export interface ConfigOptions {
 
 export function readConfig(options: ConfigOptions, env = process.env): Config {
   return configSchema.parse({
-    baseUrl: options.baseUrl ?? env.AGENT_BASE_URL ?? 'http://127.0.0.1:11434',
-    model: options.model ?? env.AGENT_MODEL ?? 'qwen3:8b',
-    contextLength: options.contextLength ?? env.AGENT_CONTEXT_LENGTH ?? 40960,
-    timeoutMs: options.timeoutMs ?? env.AGENT_TIMEOUT_MS ?? 120_000,
-    think: options.think ?? env.AGENT_THINK ?? false,
+    baseUrl: options.baseUrl ?? env.AGENT_BASE_URL,
+    model: options.model ?? env.AGENT_MODEL,
+    contextLength: options.contextLength ?? env.AGENT_CONTEXT_LENGTH,
+    timeoutMs: options.timeoutMs ?? env.AGENT_TIMEOUT_MS,
+    think: options.think ?? env.AGENT_THINK,
   });
 }
